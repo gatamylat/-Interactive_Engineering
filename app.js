@@ -529,6 +529,12 @@ try {
 /* Autonomous execution: each request receives the goal, plan, step materials and current files. */
 const exId = id => document.getElementById(id);
 const exStore = 'interactive-engineering:executor-v1';
+const exArchiveStore = 'interactive-engineering:executor-projects-v1';
+const exArchives=()=>{try{return JSON.parse(localStorage.getItem(exArchiveStore)||'[]')}catch{return []}};
+function exArchive(){if(!exJob)return false;const items=exArchives();const name=prompt('Название проекта для сохранения:',exJob.task.slice(0,75));if(!name)return false;items.unshift({id:crypto.randomUUID(),name,created:new Date().toISOString(),job:structuredClone(exJob),assembly:structuredClone(assembly)});localStorage.setItem(exArchiveStore,JSON.stringify(items));exId('exec-status').textContent='Проект сохранён в архиве этого устройства.';exRender();return true}
+function exReset(){if(exBusy){exId('exec-status').textContent='Сначала приостановите выполнение.';return}if(!confirm('Начать новую сессию? Несохранённый прогресс исполнения будет удалён.'))return;exJob=null;localStorage.removeItem(exStore);exId('exec-status').textContent='Исполнение сброшено. Текущий план в редакторе сохранён.';exRender()}
+function exRestore(){if(exBusy)return;const items=exArchives();if(!items.length){exId('exec-status').textContent='Сохранённых проектов пока нет.';return}const list=items.map((x,i)=>(i+1)+'. '+x.name+' · '+new Date(x.created).toLocaleDateString('ru-RU')+' · шаг '+(x.job.index+1)).join('\n');const answer=prompt('Введите номер проекта:\n'+list);if(!answer)return;const i=Number(answer)-1;if(!Number.isInteger(i)||!items[i])return;exJob=structuredClone(items[i].job);assembly=structuredClone(items[i].assembly);persistDraft();renderAssembly();exSave();exId('exec-format').value=exJob.format;exId('exec-status').textContent='Проект восстановлен: '+items[i].name;exRender()}
+
 let exJob = null, exBusy = false, exPause = false;
 try { exJob = JSON.parse(localStorage.getItem(exStore) || 'null'); } catch {}
 function exSave() { localStorage.setItem(exStore, JSON.stringify(exJob)); }
@@ -541,10 +547,10 @@ function exContext() {
   const ids=new Set([...exJob.globalIds,...s.ids]);
   const linked=exJob.materials.filter(m=>ids.has(m.id)).map(m=>({title:m.title,scope:m.scope,check:m.check,text:m.text.slice(0,22000)}));
   return JSON.stringify({
-    instruction:'Выполни только текущий шаг. Сохраняй общую цель. Верни полные тексты только изменённых файлов. Не используй CDN. Для документа создавай result.md. Формат ответа: JSON {summary,check,next_impulse,files:[{name,content}]}. Если нет изменений файлов, files=[]. Не добавляй markdown вокруг JSON.',
+    instruction:'Выполни только текущий шаг. Сохраняй общую цель. Для нового небольшого файла используй files:[{name,content}]. Для существующих БОЛЬШИХ файлов используй patches:[{name,find,replace}], где find — точный уникальный фрагмент, а replace — новый текст. Никогда не возвращай большой исходный index.html целиком. Можно вернуть files:[] и patches:[]. Не используй CDN. Для документа создавай result.md. Ответ строго JSON {summary,check,next_impulse,files:[{name,content}],patches:[{name,find,replace}]}. Не добавляй markdown.',
     goal:exJob.task,expectedResult:exJob.result,format:exJob.format,
     plan:exJob.steps.map(x=>({title:x.title,result:x.result})),
-    completed:exJob.done.map(d=>({summary:d.summary,next_impulse:d.next_impulse})),step:s,materials:linked,files:exJob.files
+    completed:exJob.done.map(d=>({summary:d.summary,next_impulse:d.next_impulse})),step:s,materials:linked,files:Object.fromEntries(Object.entries(exJob.files).map(([name,content])=>[name,content.length>20000?content.slice(0,12000)+'\n[...середина опущена...]\n'+content.slice(-5000):content]))
   });
 }
 function exValidate() {
@@ -587,11 +593,15 @@ async function exRun(){
       const reply=await askModel(exJob.model,key,[{role:'user',content:exContext()}],fetch,{maxTokens:12000,timeoutMs:180000,requireComplete:true});
       const v=exParse(reply);
       if(typeof v.summary!=='string'||typeof v.check!=='string'||!Array.isArray(v.files))throw Error('Неполный ответ модели');
+      const patches=Array.isArray(v.patches)?v.patches:[];
+      const staged={...exJob.files};
+      for(const p of patches){if(typeof p.name!=='string'||typeof p.find!=='string'||typeof p.replace!=='string'||!p.find)throw Error('Некорректная точечная правка');const base=staged[p.name];if(typeof base!=='string')throw Error('Нет файла для правки: '+p.name);const pos=base.indexOf(p.find);if(pos<0||base.indexOf(p.find,pos+1)>=0)throw Error('Фрагмент для правки не найден или неоднозначен: '+p.name);staged[p.name]=base.slice(0,pos)+p.replace+base.slice(pos+p.find.length)}
       for(const f of v.files){
         if(typeof f.name!=='string'||typeof f.content!=='string'||!/^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(f.name)||f.name.includes('..'))throw Error('Некорректное имя файла');
       }
-      for(const f of v.files)exJob.files[f.name]=f.content;
-      if(exJob.index>=2 && exJob.format==='pwa' && !v.files.length)throw Error('Шаг реализации не создал файлов. Повторите запрос.');
+      for(const f of v.files)staged[f.name]=f.content;
+      exJob.files=staged;
+      if(exJob.index>=2 && exJob.format==='pwa' && !v.files.length && !patches.length)throw Error('Шаг реализации не создал файлов. Повторите запрос.');
       exJob.done.push({summary:v.summary,check:v.check,next_impulse:String(v.next_impulse||'')});
       exJob.index++;exSave();exRender();
     }catch(e){exPause=true;exId('exec-status').textContent='Остановлено на шаге '+(exJob.index+1)+': '+e.message}
@@ -636,4 +646,7 @@ exId('exec-start').addEventListener('click',()=>{
 });
 exId('exec-run').addEventListener('click',exRun);
 exId('exec-download').addEventListener('click',exDownload);
+exId('exec-save').addEventListener('click',exArchive);
+exId('exec-reset').addEventListener('click',exReset);
+exId('exec-restore').addEventListener('click',exRestore);
 exRender();
