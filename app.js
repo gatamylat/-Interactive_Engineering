@@ -524,3 +524,115 @@ try {
 } catch {
   status('plan-status', 'Не удалось открыть локальное хранилище.');
 }
+
+
+/* Autonomous execution: each request receives the goal, plan, step materials and current files. */
+const exId = id => document.getElementById(id);
+const exStore = 'interactive-engineering:executor-v1';
+let exJob = null, exBusy = false, exPause = false;
+try { exJob = JSON.parse(localStorage.getItem(exStore) || 'null'); } catch {}
+function exSave() { localStorage.setItem(exStore, JSON.stringify(exJob)); }
+function exParse(raw) {
+  const s = raw.replace(/^\s*\x60\x60\x60(?:json)?/i, '').replace(/\x60\x60\x60\s*$/, '').trim();
+  try { return JSON.parse(s); } catch { const a=s.indexOf('{'), b=s.lastIndexOf('}'); return JSON.parse(s.slice(a,b+1)); }
+}
+function exContext() {
+  const s=exJob.steps[exJob.index];
+  const ids=new Set([...exJob.globalIds,...s.ids]);
+  const linked=exJob.materials.filter(m=>ids.has(m.id)).map(m=>({title:m.title,scope:m.scope,check:m.check,text:m.text}));
+  return JSON.stringify({
+    instruction:'Выполни только текущий шаг. Сохраняй общую цель. Верни полные тексты только изменённых файлов. Не используй CDN. Для документа создавай result.md. Формат ответа: JSON {summary,check,next_impulse,files:[{name,content}]}. Если нет изменений файлов, files=[]. Не добавляй markdown вокруг JSON.',
+    goal:exJob.task,expectedResult:exJob.result,format:exJob.format,
+    plan:exJob.steps.map(x=>({title:x.title,result:x.result})),
+    completed:exJob.done,step:s,materials:linked,files:exJob.files
+  });
+}
+function exValidate() {
+  const f=exJob.files,errors=[];
+  if(exJob.format==='pwa') {
+    for(const n of ['index.html','sw.js','manifest.webmanifest'])if(!f[n])errors.push('Нет '+n);
+    if(f['manifest.webmanifest'])try {JSON.parse(f['manifest.webmanifest'])}catch{errors.push('Некорректный manifest')}
+    if(f['index.html']&&!f['index.html'].includes('serviceWorker'))errors.push('Нет регистрации service worker');
+  }
+  if(exJob.format==='html'&&!f['index.html'])errors.push('Нет index.html');
+  if(exJob.format==='document'&&!f['result.md'])errors.push('Нет result.md');
+  return errors;
+}
+function exRender() {
+  const p=exId('exec-progress');p.replaceChildren();
+  if(!exJob){p.textContent='Составьте план и запустите сессию.';return}
+  const status=document.createElement('p');
+  status.textContent='Шаг '+Math.min(exJob.index+1,exJob.steps.length)+' из '+exJob.steps.length+(exBusy?' · выполняется':exJob.index===exJob.steps.length?' · завершено':' · пауза');
+  p.append(status);
+  const ol=document.createElement('ol');
+  exJob.steps.forEach((s,i)=>{const li=document.createElement('li');li.textContent=(i<exJob.index?'✓ ':i===exJob.index?'▶ ':'○ ')+s.title;ol.append(li)});
+  p.append(ol);
+  const files=document.createElement('p');files.textContent='Файлы: '+(Object.keys(exJob.files).join(', ')||'пока нет');p.append(files);
+  if(exJob.index===exJob.steps.length){const e=exValidate();if(e.length){const x=document.createElement('p');x.textContent='Требует проверки: '+e.join('; ');p.append(x)}}
+  const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
+  summary.textContent='Журнал';pre.style.whiteSpace='pre-wrap';pre.textContent=exJob.done.map((d,i)=>(i+1)+'. '+d.summary+'\nПроверка: '+d.check+'\nДалее: '+d.next_impulse).join('\n\n');
+  details.append(summary,pre);p.append(details);
+  exId('exec-run').disabled=exJob.index===exJob.steps.length&&!exBusy;
+  exId('exec-run').textContent=exBusy?'Пауза после шага':'Продолжить выполнение';
+  exId('exec-download').disabled=!Object.keys(exJob.files).length;
+}
+async function exRun(){
+  if(exBusy){exPause=true;return}
+  if(!exJob||exJob.index>=exJob.steps.length)return;
+  const key=get('key-'+exJob.model);
+  if(!key){exId('exec-status').textContent='API-ключ не найден в настройках.';return}
+  exPause=false;exBusy=true;exRender();
+  while(!exPause&&exJob.index<exJob.steps.length){
+    try{
+      const reply=await askModel(exJob.model,key,[{role:'user',content:exContext()}]);
+      const v=exParse(reply);
+      if(typeof v.summary!=='string'||typeof v.check!=='string'||!Array.isArray(v.files))throw Error('Неполный ответ модели');
+      for(const f of v.files){
+        if(typeof f.name!=='string'||typeof f.content!=='string'||!/^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(f.name)||f.name.includes('..'))throw Error('Некорректное имя файла');
+      }
+      for(const f of v.files)exJob.files[f.name]=f.content;
+      exJob.done.push({summary:v.summary,check:v.check,next_impulse:String(v.next_impulse||'')});
+      exJob.index++;exSave();exRender();
+    }catch(e){exPause=true;exId('exec-status').textContent='Остановлено на шаге '+(exJob.index+1)+': '+e.message}
+  }
+  exBusy=false;exRender();
+  if(exJob.index===exJob.steps.length)exId('exec-status').textContent='Выполнение завершено. Скачайте результат и проверьте его.';
+}
+function exCrc(data){let c=-1;for(const b of data){c^=b;for(let i=0;i<8;i++)c=c&1?(c>>>1)^0xedb88320:c>>>1}return(c^-1)>>>0}
+function exZip(files){
+  const u16=n=>[n&255,(n>>>8)&255],u32=n=>[n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255];
+  const enc=new TextEncoder(),parts=[],central=[];let offset=0;
+  for(const [name,content] of Object.entries(files)){
+    const n=enc.encode(name),d=enc.encode(content),size=d.length,crc=exCrc(d);
+    const local=new Uint8Array([...u32(0x04034b50),...u16(20),...u16(0x800),...u16(0),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(size),...u32(size),...u16(n.length),...u16(0),...n]);
+    parts.push(local,d);
+    central.push(new Uint8Array([...u32(0x02014b50),...u16(20),...u16(20),...u16(0x800),...u16(0),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(size),...u32(size),...u16(n.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(offset),...n]));
+    offset+=local.length+d.length;
+  }
+  const len=central.reduce((s,x)=>s+x.length,0);
+  return new Blob([...parts,...central,new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(central.length),...u16(central.length),...u32(len),...u32(offset),...u16(0)])],{type:'application/zip'});
+}
+function exDownload(){
+  if(!exJob)return;
+  const entries=Object.entries(exJob.files);if(!entries.length)return;
+  const blob=entries.length===1?new Blob([entries[0][1]],{type:'text/plain;charset=utf-8'}):exZip(exJob.files);
+  const url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=entries.length===1?entries[0][0]:'engineering-result.zip';a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+}
+exId('exec-start').addEventListener('click',()=>{
+  if(exBusy)return;
+  if(!assembly.task.trim()||!assembly.result.trim()||!assembly.steps.length||assembly.steps.some(s=>!s.title.trim()||!s.action.trim()||!s.result.trim()||!s.check.trim())){
+    exId('exec-status').textContent='Заполните задачу, результат и все поля плана.';return;
+  }
+  if(exJob&&exJob.index<exJob.steps.length&&!confirm('Заменить предыдущую сессию?'))return;
+  const model=exId('model').value;
+  if(!get('key-'+model)){exId('exec-status').textContent='Сначала добавьте ключ модели в настройках.';return}
+  exJob={task:assembly.task,result:assembly.result,steps:structuredClone(assembly.steps),globalIds:[...assembly.ids],
+    materials:structuredClone(materials()),model,format:exId('exec-format').value,index:0,done:[],files:{}};
+  try{exSave();exId('exec-status').textContent='План зафиксирован. Нажмите «Продолжить выполнение».'}catch(e){exId('exec-status').textContent=e.message}
+  exRender();
+});
+exId('exec-run').addEventListener('click',exRun);
+exId('exec-download').addEventListener('click',exDownload);
+exRender();
