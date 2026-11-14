@@ -539,19 +539,19 @@ function exParse(raw) {
 function exContext() {
   const s=exJob.steps[exJob.index];
   const ids=new Set([...exJob.globalIds,...s.ids]);
-  const linked=exJob.materials.filter(m=>ids.has(m.id)).map(m=>({title:m.title,scope:m.scope,check:m.check,text:m.text}));
+  const linked=exJob.materials.filter(m=>ids.has(m.id)).map(m=>({title:m.title,scope:m.scope,check:m.check,text:m.text.slice(0,22000)}));
   return JSON.stringify({
     instruction:'Выполни только текущий шаг. Сохраняй общую цель. Верни полные тексты только изменённых файлов. Не используй CDN. Для документа создавай result.md. Формат ответа: JSON {summary,check,next_impulse,files:[{name,content}]}. Если нет изменений файлов, files=[]. Не добавляй markdown вокруг JSON.',
     goal:exJob.task,expectedResult:exJob.result,format:exJob.format,
     plan:exJob.steps.map(x=>({title:x.title,result:x.result})),
-    completed:exJob.done,step:s,materials:linked,files:exJob.files
+    completed:exJob.done.map(d=>({summary:d.summary,next_impulse:d.next_impulse})),step:s,materials:linked,files:exJob.files
   });
 }
 function exValidate() {
   const f=exJob.files,errors=[];
   if(exJob.format==='pwa') {
-    for(const n of ['index.html','sw.js','manifest.webmanifest'])if(!f[n])errors.push('Нет '+n);
-    if(f['manifest.webmanifest'])try {JSON.parse(f['manifest.webmanifest'])}catch{errors.push('Некорректный manifest')}
+    for(const n of ['index.html','sw.js','manifest.webmanifest'])if(!f[n] && !(n==='manifest.webmanifest'&&f['manifest.json']))errors.push('Нет '+n);
+    if(f['manifest.webmanifest']||f['manifest.json'])try {JSON.parse(f['manifest.webmanifest']||f['manifest.json'])}catch{errors.push('Некорректный manifest')}
     if(f['index.html']&&!f['index.html'].includes('serviceWorker'))errors.push('Нет регистрации service worker');
   }
   if(exJob.format==='html'&&!f['index.html'])errors.push('Нет index.html');
@@ -584,13 +584,14 @@ async function exRun(){
   exPause=false;exBusy=true;exRender();
   while(!exPause&&exJob.index<exJob.steps.length){
     try{
-      const reply=await askModel(exJob.model,key,[{role:'user',content:exContext()}]);
+      const reply=await askModel(exJob.model,key,[{role:'user',content:exContext()}],fetch,{maxTokens:12000,timeoutMs:180000,requireComplete:true});
       const v=exParse(reply);
       if(typeof v.summary!=='string'||typeof v.check!=='string'||!Array.isArray(v.files))throw Error('Неполный ответ модели');
       for(const f of v.files){
         if(typeof f.name!=='string'||typeof f.content!=='string'||!/^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(f.name)||f.name.includes('..'))throw Error('Некорректное имя файла');
       }
       for(const f of v.files)exJob.files[f.name]=f.content;
+      if(exJob.index>=2 && exJob.format==='pwa' && !v.files.length)throw Error('Шаг реализации не создал файлов. Повторите запрос.');
       exJob.done.push({summary:v.summary,check:v.check,next_impulse:String(v.next_impulse||'')});
       exJob.index++;exSave();exRender();
     }catch(e){exPause=true;exId('exec-status').textContent='Остановлено на шаге '+(exJob.index+1)+': '+e.message}
