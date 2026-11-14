@@ -573,7 +573,7 @@ function exRender() {
   const ol=document.createElement('ol');
   exJob.steps.forEach((s,i)=>{const li=document.createElement('li');li.textContent=(i<exJob.index?'✓ ':i===exJob.index?'▶ ':'○ ')+s.title;ol.append(li)});
   p.append(ol);
-  const files=document.createElement('p');files.textContent='Файлы: '+(Object.keys(exJob.files).join(', ')||'пока нет');p.append(files);
+  const files=document.createElement('div');files.append(document.createTextNode('Файлы проекта:'));const names=Object.keys(exJob.files);if(!names.length)files.append(document.createTextNode(' пока нет'));for(const name of names){const b=document.createElement('button');b.type='button';b.textContent='↓ '+name;b.style.cssText='display:block;margin:6px 0;max-width:100%;overflow-wrap:anywhere';b.addEventListener('click',()=>exDownloadFile(name));files.append(b)}p.append(files);
   if(exJob.index===exJob.steps.length){const e=exValidate();if(e.length){const x=document.createElement('p');x.textContent='Требует проверки: '+e.join('; ');p.append(x)}}
   const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
   summary.textContent='Журнал';pre.style.whiteSpace='pre-wrap';pre.textContent=exJob.done.map((d,i)=>(i+1)+'. '+d.summary+'\nПроверка: '+d.check+'\nДалее: '+d.next_impulse).join('\n\n');
@@ -600,7 +600,7 @@ async function exRun(){
         if(typeof f.name!=='string'||typeof f.content!=='string'||!/^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(f.name)||f.name.includes('..'))throw Error('Некорректное имя файла');
       }
       for(const f of v.files)staged[f.name]=f.content;
-      if(exJob.index>=2 && exJob.format==='pwa' && !v.files.length && !patches.length)throw Error('Шаг реализации не создал файлов. Повторите запрос.');
+      if(exJob.index>=2 && exJob.format==='pwa' && !v.files.length && !patches.length && /созда|реализ|подключ|измен|обнов|регистр|кэш|service.worker/i.test(exJob.steps[exJob.index].title+' '+exJob.steps[exJob.index].action))throw Error('Модель описала работу, но не вернула изменения файлов. Шаг не засчитан; повторите запрос.');
       exJob.files=staged;
       exJob.done.push({summary:v.summary,check:v.check,next_impulse:String(v.next_impulse||'')});
       exJob.index++;exSave();exRender();
@@ -623,6 +623,7 @@ function exZip(files){
   const len=central.reduce((s,x)=>s+x.length,0);
   return new Blob([...parts,...central,new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(central.length),...u16(central.length),...u32(len),...u32(offset),...u16(0)])],{type:'application/zip'});
 }
+function exDownloadFile(name){if(!exJob||typeof exJob.files[name]!=='string')return;const blob=new Blob([exJob.files[name]],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name.split('/').pop();a.click();setTimeout(()=>URL.revokeObjectURL(url),10000)}
 function exDownload(){
   if(!exJob)return;
   const entries=Object.entries(exJob.files);if(!entries.length)return;
