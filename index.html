@@ -23,7 +23,7 @@
       <button type="button" data-section="expectation" data-open="library">Ожидания</button>
       <button type="button" data-section="recipe" data-open="library">Рецепты</button>
       <button type="button" data-open="settings">Настройки</button>
-      <span id="app-version" aria-label="Версия приложения" style="display:block;padding:10px 14px;font-size:12px;opacity:.7">Версия 0.6.0</span>
+      <span id="app-version" aria-label="Версия приложения" style="display:block;padding:10px 14px;font-size:12px;opacity:.7">Версия 0.6.1</span>
     </nav>
   </header>
   <main>
@@ -52,19 +52,26 @@
       <section class="paper workspace-card">
         <h2>Автономное выполнение</h2>
         <p>Проверьте план, затем зафиксируйте его для пошагового выполнения. На каждом шаге модель получает цель, материалы и актуальные файлы.</p>
+        <label>Результат <select id="exec-format"><option value="pwa">PWA (несколько файлов)</option><option value="html">Один HTML</option><option value="document">Документ Markdown</option></select></label>
         <div class="row">
-          <label>Результат <select id="exec-format"><option value="pwa">PWA (несколько файлов)</option><option value="html">Один HTML</option><option value="document">Документ Markdown</option></select></label>
-          <button type="button" id="exec-start">Зафиксировать план</button>
-          <button type="button" id="exec-run">Продолжить выполнение</button>
-          <button type="button" id="exec-download" disabled>Скачать результат</button>
-          <button type="button" id="exec-save">Сохранить проект</button>
-          <button type="button" id="exec-restore">Открыть сохранённый</button>
-          <button type="button" id="exec-reset">Сбросить выполнение</button>
+          <button type="button" class="primary" id="exec-start">Начать выполнение плана</button>
+          <button type="button" class="primary" id="exec-run" hidden>Продолжить выполнение</button>
+          <button type="button" id="exec-download" disabled hidden>Скачать файлы ZIP</button>
         </div>
+        <details id="project-tools">
+          <summary>Проекты и сохранение</summary>
+          <p>Сохранённый проект включает задачу, план, материалы, файлы и журнал. Новая работа очищает только текущий проект, но не библиотеку и не сохранённые проекты.</p>
+          <div class="row">
+            <button type="button" id="exec-save">Сохранить текущий</button>
+            <button type="button" id="exec-restore">Открыть сохранённый</button>
+            <button type="button" id="exec-reset">Новый проект с нуля</button>
+          </div>
+        </details>
         <p id="exec-status" role="status"></p>
         <div id="exec-progress"></div>
       </section>
-      <section class="paper workspace-card">
+      <details class="paper workspace-card" id="external-package">
+        <summary>Экспорт задания для внешнего исполнителя</summary>
         <h2>Пакет для исполнителя</h2>
         <p>Передайте задание в Codex, Kimi или Гермес.</p>
         <div class="row package-actions">
@@ -75,7 +82,7 @@
         </div>
         <p id="package-status" role="status"></p>
         <details><summary>Посмотреть пакет</summary><textarea id="package" aria-label="Пакет для исполнителя" rows="10" readonly></textarea></details>
-      </section>
+      </details>
     </form>
   </main>
 </div>
@@ -137,6 +144,6 @@
   </div>
   <button class="dialog-dismiss" type="button" data-close tabindex="-1" aria-label="Закрыть окно"></button>
 </dialog>
-<script type="module" src="./app.js?v=6"></script>
+<script type="module" src="./app.js?v=7"></script>
 </body>
 </html>
