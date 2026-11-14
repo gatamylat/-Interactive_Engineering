@@ -595,13 +595,13 @@ async function exRun(){
       if(typeof v.summary!=='string'||typeof v.check!=='string'||!Array.isArray(v.files))throw Error('Неполный ответ модели');
       const patches=Array.isArray(v.patches)?v.patches:[];
       const staged={...exJob.files};
-      for(const p of patches){if(typeof p.name!=='string'||typeof p.find!=='string'||typeof p.replace!=='string'||!p.find)throw Error('Некорректная точечная правка');const base=staged[p.name];if(typeof base!=='string')throw Error('Нет файла для правки: '+p.name);const pos=base.indexOf(p.find);if(pos<0||base.indexOf(p.find,pos+1)>=0)throw Error('Фрагмент для правки не найден или неоднозначен: '+p.name);staged[p.name]=base.slice(0,pos)+p.replace+base.slice(pos+p.find.length)}
+      for(const p of patches){if(typeof p.name!=='string'||typeof p.find!=='string'||typeof p.replace!=='string'||!p.find)throw Error('Некорректная точечная правка');if(!/^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(p.name)||p.name.includes('..'))throw Error('Недопустимое имя файла');const base=staged[p.name];if(typeof base!=='string')throw Error('Нет файла для правки: '+p.name);const pos=base.indexOf(p.find);if(pos<0||base.indexOf(p.find,pos+1)>=0)throw Error('Фрагмент для правки не найден или неоднозначен: '+p.name);staged[p.name]=base.slice(0,pos)+p.replace+base.slice(pos+p.find.length)}
       for(const f of v.files){
         if(typeof f.name!=='string'||typeof f.content!=='string'||!/^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(f.name)||f.name.includes('..'))throw Error('Некорректное имя файла');
       }
       for(const f of v.files)staged[f.name]=f.content;
-      exJob.files=staged;
       if(exJob.index>=2 && exJob.format==='pwa' && !v.files.length && !patches.length)throw Error('Шаг реализации не создал файлов. Повторите запрос.');
+      exJob.files=staged;
       exJob.done.push({summary:v.summary,check:v.check,next_impulse:String(v.next_impulse||'')});
       exJob.index++;exSave();exRender();
     }catch(e){exPause=true;exId('exec-status').textContent='Остановлено на шаге '+(exJob.index+1)+': '+e.message}
@@ -641,6 +641,7 @@ exId('exec-start').addEventListener('click',()=>{
   if(!get('key-'+model)){exId('exec-status').textContent='Сначала добавьте ключ модели в настройках.';return}
   exJob={task:assembly.task,result:assembly.result,steps:structuredClone(assembly.steps),globalIds:[...assembly.ids],
     materials:structuredClone(materials()),model,format:exId('exec-format').value,index:0,done:[],files:{}};
+  if(exJob.format==='pwa'){for(const m of exJob.materials){const name=(m.source||m.title||'').split('/').pop();if(['index.html','sw.js','manifest.json','manifest.webmanifest','README.md'].includes(name)&&m.text)exJob.files[name]=m.text}}
   try{exSave();exId('exec-status').textContent='План зафиксирован. Нажмите «Продолжить выполнение».'}catch(e){exId('exec-status').textContent=e.message}
   exRender();
 });
