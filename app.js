@@ -19,6 +19,11 @@ let connection;
 let connecting = false;
 let planning = false;
 
+const exId = $;
+const exStore = 'interactive-engineering:executor-v1';
+let exJob = null, exBusy = false, exPause = false;
+try { exJob = JSON.parse(localStorage.getItem(exStore) || 'null'); } catch {}
+
 function node(tag, text, className) {
   const element = document.createElement(tag);
   if (text) element.textContent = text;
@@ -37,14 +42,19 @@ const materials = () => state ? entries(state).filter(item => item.kind !== 'rec
 const byTitle = (a, b) => a.title.localeCompare(b.title, 'ru');
 const itemById = id => state?.library[id]?.entry;
 
-function updatePackage() {
-  const ready = !!assembly.task.trim() && !!assembly.result.trim() && assembly.steps.length > 0
+function planReady() {
+  return !!assembly.task.trim() && !!assembly.result.trim() && assembly.steps.length > 0
     && assembly.steps.every(step => [step.title, step.action, step.result, step.check].every(value => value.trim()));
+}
+
+function updatePackage() {
+  const ready = planReady();
   if ($('package').closest('details').open) $('package').value = ready ? buildPackage(assembly, materials()) : '';
   $('copy').disabled = !ready;
   $('download').disabled = !ready;
   $('save-recipe').disabled = !state || !assembly.task.trim();
   $('plan').disabled = planning || !state || !assembly.task.trim();
+  exUpdateControls(ready);
 }
 
 function persistDraft() {
@@ -527,8 +537,6 @@ try {
 
 
 /* Autonomous execution: each request receives the goal, plan, step materials and current files. */
-const exId = id => document.getElementById(id);
-const exStore = 'interactive-engineering:executor-v1';
 const exArchiveStore = 'interactive-engineering:executor-projects-v1';
 const exArchives=()=>{try{return JSON.parse(localStorage.getItem(exArchiveStore)||'[]')}catch{return []}};
 function exArchive(){if(!exJob)return false;const items=exArchives();const name=prompt('Название проекта для сохранения:',exJob.task.slice(0,75));if(!name)return false;items.unshift({id:crypto.randomUUID(),name,created:new Date().toISOString(),job:structuredClone(exJob),assembly:structuredClone(assembly)});localStorage.setItem(exArchiveStore,JSON.stringify(items));exId('exec-status').textContent='Проект сохранён в архиве этого устройства.';exRender();return true}
@@ -540,9 +548,7 @@ function exReset(){
 }
 function exRestore(){if(exBusy)return;const items=exArchives();if(!items.length){exId('exec-status').textContent='Сохранённых проектов пока нет.';return}const list=items.map((x,i)=>(i+1)+'. '+x.name+' · '+new Date(x.created).toLocaleDateString('ru-RU')+' · шаг '+(x.job.index+1)).join('\n');const answer=prompt('Введите номер проекта:\n'+list);if(!answer)return;const i=Number(answer)-1;if(!Number.isInteger(i)||!items[i])return;exJob=structuredClone(items[i].job);assembly=structuredClone(items[i].assembly);persistDraft();renderAssembly();exSave();exId('exec-format').value=exJob.format;exId('exec-status').textContent='Проект восстановлен: '+items[i].name;exRender()}
 
-let exJob = null, exBusy = false, exPause = false;
-try { exJob = JSON.parse(localStorage.getItem(exStore) || 'null'); } catch {}
-function exSave() { localStorage.setItem(exStore, JSON.stringify(exJob)); }
+function exSave(job = exJob) { localStorage.setItem(exStore, JSON.stringify(job)); }
 function exParse(raw) {
   const s = raw.replace(/^\s*\x60\x60\x60(?:json)?/i, '').replace(/\x60\x60\x60\s*$/, '').trim();
   try { return JSON.parse(s); } catch { const a=s.indexOf('{'), b=s.lastIndexOf('}'); return JSON.parse(s.slice(a,b+1)); }
@@ -569,32 +575,52 @@ function exValidate() {
   if(exJob.format==='document'&&!f['result.md'])errors.push('Нет result.md');
   return errors;
 }
+function exPlanChanged() {
+  if (!exJob) return false;
+  const planFields = steps => steps.map(({title, action, result, check, ids}) =>
+    [title, action, result, check, ids]);
+  return exJob.task !== assembly.task || exJob.result !== assembly.result
+    || JSON.stringify(exJob.globalIds) !== JSON.stringify(assembly.ids)
+    || JSON.stringify(planFields(exJob.steps)) !== JSON.stringify(planFields(assembly.steps));
+}
+
+function exUpdateControls(ready = planReady()) {
+  const changed = exPlanChanged();
+  const start = exId('exec-start');
+  start.hidden = !!exJob && (!changed || exBusy);
+  start.disabled = planning || (changed && !ready);
+  start.textContent = exJob ? 'Запустить повторно' : 'Начать выполнение плана';
+  const run = exId('exec-run');
+  run.hidden = !exBusy && (!exJob || changed || exJob.index >= exJob.steps.length);
+  run.textContent = exBusy ? 'Пауза после шага' : 'Продолжить выполнение';
+  exId('exec-plan-changed').hidden = !changed;
+}
+
 function exRender() {
+  exUpdateControls();
   const p=exId('exec-progress');p.replaceChildren();
-  if(!exJob){p.textContent='Введите задачу, составьте план и нажмите «Начать выполнение плана».';exId('exec-start').hidden=false;exId('exec-run').hidden=true;exId('exec-download').hidden=true;return}
+  if(!exJob){p.textContent='Введите задачу, составьте план и нажмите «Начать выполнение плана».';exId('exec-download').hidden=true;return}
   const status=document.createElement('p');
   status.textContent='Шаг '+Math.min(exJob.index+1,exJob.steps.length)+' из '+exJob.steps.length+(exBusy?' · выполняется':exJob.index===exJob.steps.length?' · завершено':' · пауза');
   p.append(status);
   const ol=document.createElement('ol');
   exJob.steps.forEach((s,i)=>{const li=document.createElement('li');li.textContent=(i<exJob.index?'✓ ':i===exJob.index?'▶ ':'○ ')+s.title;ol.append(li)});
   p.append(ol);
-  const names=Object.keys(exJob.files);if(names.length){const files=document.createElement('details');const heading=document.createElement('summary');heading.textContent='Отдельные файлы ('+names.length+')';files.append(heading);const info=document.createElement('p');info.textContent='Обычно достаточно кнопки «Скачать файлы ZIP» выше.';files.append(info);for(const name of names){const b=document.createElement('button');b.type='button';b.textContent='↓ '+name;b.style.cssText='display:block;margin:6px 0;max-width:100%;overflow-wrap:anywhere';b.addEventListener('click',()=>exDownloadFile(name));files.append(b)}p.append(files)}
+  const names=Object.keys(exJob.files);if(names.length){const files=document.createElement('details');const heading=document.createElement('summary');heading.textContent='Отдельные файлы ('+names.length+')';files.append(heading);const info=document.createElement('p');info.textContent='Обычно достаточно кнопки «Скачать файлы» выше.';files.append(info);for(const name of names){const b=document.createElement('button');b.type='button';b.textContent='↓ '+name;b.style.cssText='display:block;margin:6px 0;max-width:100%;overflow-wrap:anywhere';b.addEventListener('click',()=>exDownloadFile(name));files.append(b)}p.append(files)}
   if(exJob.index===exJob.steps.length){const e=exValidate();if(e.length){const x=document.createElement('p');x.textContent='Требует проверки: '+e.join('; ');p.append(x)}}
   const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
   summary.textContent='Журнал';pre.style.whiteSpace='pre-wrap';pre.textContent=exJob.done.map((d,i)=>(i+1)+'. '+d.summary+'\nПроверка: '+d.check+'\nДалее: '+d.next_impulse).join('\n\n');
   details.append(summary,pre);p.append(details);
-  exId('exec-start').hidden=true;exId('exec-run').hidden=exJob.index===exJob.steps.length&&!exBusy;exId('exec-download').hidden=!Object.keys(exJob.files).length;
-  exId('exec-run').disabled=exJob.index===exJob.steps.length&&!exBusy;
-  exId('exec-run').textContent=exBusy?'Пауза после шага':'Продолжить выполнение';
+  exId('exec-download').hidden=!Object.keys(exJob.files).length;
   exId('exec-download').disabled=!Object.keys(exJob.files).length;
 }
 async function exRun(){
   if(exBusy){exPause=true;return}
-  if(!exJob||exJob.index>=exJob.steps.length)return;
+  if(!exJob||exJob.index>=exJob.steps.length||exPlanChanged())return;
   const key=get('key-'+exJob.model);
   if(!key){exId('exec-status').textContent='API-ключ не найден в настройках.';return}
   exPause=false;exBusy=true;exRender();
-  while(!exPause&&exJob.index<exJob.steps.length){
+  while(!exPause&&!exPlanChanged()&&exJob.index<exJob.steps.length){
     try{
       const reply=await askModel(exJob.model,key,[{role:'user',content:exContext()}],fetch,{maxTokens:12000,timeoutMs:180000,requireComplete:true});
       const v=exParse(reply);
@@ -639,18 +665,25 @@ function exDownload(){
   setTimeout(()=>URL.revokeObjectURL(url),2000);
 }
 exId('exec-start').addEventListener('click',()=>{
-  if(exBusy)return;
-  if(!assembly.task.trim()||!assembly.result.trim()||!assembly.steps.length||assembly.steps.some(s=>!s.title.trim()||!s.action.trim()||!s.result.trim()||!s.check.trim())){
+  if(exBusy||planning||(exJob&&!exPlanChanged()))return;
+  if(!planReady()){
     exId('exec-status').textContent='Заполните задачу, результат и все поля плана.';return;
   }
-  if(exJob&&exJob.index<exJob.steps.length&&!confirm('Заменить предыдущую сессию?'))return;
   const model=exId('model').value;
   if(!get('key-'+model)){exId('exec-status').textContent='Сначала добавьте ключ модели в настройках.';return}
-  exJob={task:assembly.task,result:assembly.result,steps:structuredClone(assembly.steps),globalIds:[...assembly.ids],
+  const restarting = !!exJob;
+  if (restarting && (exJob.index || Object.keys(exJob.files).length)
+    && !confirm('Запустить изменённый план с первого шага? Текущий прогресс и файлы этой сессии будут заменены.')) return;
+  const job={task:assembly.task,result:assembly.result,steps:structuredClone(assembly.steps),globalIds:[...assembly.ids],
     materials:structuredClone(materials()),model,format:exId('exec-format').value,index:0,done:[],files:{}};
-  if(exJob.format==='pwa'){for(const m of exJob.materials){const name=(m.source||m.title||'').split('/').pop();if(['index.html','sw.js','manifest.json','manifest.webmanifest','README.md'].includes(name)&&m.text)exJob.files[name]=m.text}}
-  try{exSave();exId('exec-status').textContent='План зафиксирован. Нажмите «Продолжить выполнение».'}catch(e){exId('exec-status').textContent=e.message}
-  exRender();
+  if(job.format==='pwa'){for(const m of job.materials){const name=(m.source||m.title||'').split('/').pop();if(['index.html','sw.js','manifest.json','manifest.webmanifest','README.md'].includes(name)&&m.text)job.files[name]=m.text}}
+  try { exSave(job); }
+  catch(e) { exId('exec-status').textContent=e.message; return; }
+  exJob = job;
+  exId('exec-status').textContent = restarting ? 'Выполнение обновлённого плана…'
+    : 'План зафиксирован. Нажмите «Продолжить выполнение».';
+  if (restarting) void exRun();
+  else exRender();
 });
 exId('exec-run').addEventListener('click',exRun);
 exId('exec-download').addEventListener('click',exDownload);
