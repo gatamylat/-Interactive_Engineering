@@ -116,7 +116,7 @@ const providers = {
   deepseek: {label: 'DeepSeek', url: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash'},
 };
 
-export async function askModel(provider, key, messages, request = fetch) {
+export async function askModel(provider, key, messages, request = fetch, options = {}) {
   const {label, url, model} = providers[provider];
   const headers = {'Content-Type': 'application/json'};
   if (provider === 'claude') {
@@ -126,20 +126,21 @@ export async function askModel(provider, key, messages, request = fetch) {
   } else {
     headers.Authorization = 'Bearer ' + key;
   }
-  const body = {model, messages, max_tokens: 4000};
+  const body = {model, messages, max_tokens: options.maxTokens || 4000};
   if (provider === 'deepseek') body.thinking = {type: 'disabled'};
   if (!key) throw new Error('Сохраните ключ ' + label + ' в настройках.');
   let response;
   try {
-    response = await request(url, {method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(90_000)});
-  } catch {
-    throw new Error(label + ': нет ответа от API. Проверьте сеть и доступ API из браузера.');
+    response = await request(url, {method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(options.timeoutMs || 90_000)});
+  } catch (error) {
+    throw new Error(label + ': запрос не завершился (' + (error?.name === 'TimeoutError' ? 'превышено время ожидания' : error?.message || 'ошибка сети/CORS') + ').');
   }
   if (!response.ok) {
     const hints = {400: 'Запрос или модель отклонены.', 401: 'Проверьте ключ и доступ из браузера.', 402: 'Проверьте баланс API.', 403: 'Нет доступа к API.', 429: 'Достигнут лимит запросов.'};
     throw new Error(label + ': HTTP ' + response.status + '. ' + (hints[response.status] || 'Попробуйте ещё раз.'));
   }
   const data = await response.json();
+  if (options.requireComplete && ((provider === 'claude' && data.stop_reason === 'max_tokens') || (provider === 'deepseek' && data.choices?.[0]?.finish_reason === 'length'))) throw new Error(label + ': ответ обрезан лимитом токенов. Уменьшите размер шага или материалов.');
   const value = provider === 'claude'
     ? data.content?.filter(block => block.type === 'text').map(block => block.text).join('\n')
     : data.choices?.[0]?.message?.content;
