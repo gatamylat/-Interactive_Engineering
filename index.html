@@ -49,6 +49,18 @@
       </section>
 
       <section class="paper workspace-card">
+        <h2>Автономное выполнение</h2>
+        <p>Проверьте план, затем зафиксируйте его для пошагового выполнения. На каждом шаге модель получает цель, материалы и актуальные файлы.</p>
+        <div class="row">
+          <label>Результат <select id="exec-format"><option value="pwa">PWA (несколько файлов)</option><option value="html">Один HTML</option><option value="document">Документ Markdown</option></select></label>
+          <button type="button" id="exec-start">Зафиксировать план</button>
+          <button type="button" id="exec-run">Продолжить выполнение</button>
+          <button type="button" id="exec-download" disabled>Скачать результат</button>
+        </div>
+        <p id="exec-status" role="status"></p>
+        <div id="exec-progress"></div>
+      </section>
+      <section class="paper workspace-card">
         <h2>Пакет для исполнителя</h2>
         <p>Передайте задание в Codex, Kimi или Гермес.</p>
         <div class="row package-actions">
@@ -121,6 +133,6 @@
   </div>
   <button class="dialog-dismiss" type="button" data-close tabindex="-1" aria-label="Закрыть окно"></button>
 </dialog>
-<script type="module" src="./app.js?v=2"></script>
+<script type="module" src="./app.js?v=3"></script>
 </body>
 </html>
