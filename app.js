@@ -532,7 +532,12 @@ const exStore = 'interactive-engineering:executor-v1';
 const exArchiveStore = 'interactive-engineering:executor-projects-v1';
 const exArchives=()=>{try{return JSON.parse(localStorage.getItem(exArchiveStore)||'[]')}catch{return []}};
 function exArchive(){if(!exJob)return false;const items=exArchives();const name=prompt('Название проекта для сохранения:',exJob.task.slice(0,75));if(!name)return false;items.unshift({id:crypto.randomUUID(),name,created:new Date().toISOString(),job:structuredClone(exJob),assembly:structuredClone(assembly)});localStorage.setItem(exArchiveStore,JSON.stringify(items));exId('exec-status').textContent='Проект сохранён в архиве этого устройства.';exRender();return true}
-function exReset(){if(exBusy){exId('exec-status').textContent='Сначала приостановите выполнение.';return}if(!confirm('Начать новую сессию? Несохранённый прогресс исполнения будет удалён.'))return;exJob=null;localStorage.removeItem(exStore);exId('exec-status').textContent='Исполнение сброшено. Текущий план в редакторе сохранён.';exRender()}
+function exReset(){
+  if(exBusy){exId('exec-status').textContent='Сначала приостановите выполнение.';return}
+  if(!confirm('Создать полностью новый проект? Будут очищены задача, план, выбранные кирпичики и текущее выполнение. Библиотека и сохранённые проекты останутся.'))return;
+  exJob=null;localStorage.removeItem(exStore);assembly=blankAssembly();recipeId=undefined;recipeRev=undefined;reasons={};
+  persistDraft();renderAssembly();exId('exec-status').textContent='Новый проект готов. Введите задачу и составьте план.';status('plan-status','');status('package-status','');exRender();$('task').focus();
+}
 function exRestore(){if(exBusy)return;const items=exArchives();if(!items.length){exId('exec-status').textContent='Сохранённых проектов пока нет.';return}const list=items.map((x,i)=>(i+1)+'. '+x.name+' · '+new Date(x.created).toLocaleDateString('ru-RU')+' · шаг '+(x.job.index+1)).join('\n');const answer=prompt('Введите номер проекта:\n'+list);if(!answer)return;const i=Number(answer)-1;if(!Number.isInteger(i)||!items[i])return;exJob=structuredClone(items[i].job);assembly=structuredClone(items[i].assembly);persistDraft();renderAssembly();exSave();exId('exec-format').value=exJob.format;exId('exec-status').textContent='Проект восстановлен: '+items[i].name;exRender()}
 
 let exJob = null, exBusy = false, exPause = false;
@@ -547,7 +552,7 @@ function exContext() {
   const ids=new Set([...exJob.globalIds,...s.ids]);
   const linked=exJob.materials.filter(m=>ids.has(m.id)).map(m=>({title:m.title,scope:m.scope,check:m.check,text:m.text.slice(0,22000)}));
   return JSON.stringify({
-    instruction:'Выполни только текущий шаг. Сохраняй общую цель. Для нового небольшого файла используй files:[{name,content}]. Для существующих БОЛЬШИХ файлов используй patches:[{name,find,replace}], где find — точный уникальный фрагмент, а replace — новый текст. Никогда не возвращай большой исходный index.html целиком. Можно вернуть files:[] и patches:[]. Не используй CDN. Для документа создавай result.md. Ответ строго JSON {summary,check,next_impulse,files:[{name,content}],patches:[{name,find,replace}]}. Не добавляй markdown.',
+    instruction:'Выполни только текущий шаг. Если шаг требует изменить код, обязательно верни files или patches с реальными изменениями; одних пояснений недостаточно. Если требуемое изменение уже выполнено, верни check с доказательством и no_changes_needed:true.  Сохраняй общую цель. Для нового небольшого файла используй files:[{name,content}]. Для существующих БОЛЬШИХ файлов используй patches:[{name,find,replace}], где find — точный уникальный фрагмент, а replace — новый текст. Никогда не возвращай большой исходный index.html целиком. Можно вернуть files:[] и patches:[]. Не используй CDN. Для документа создавай result.md. Ответ строго JSON {summary,check,next_impulse,files:[{name,content}],patches:[{name,find,replace}]}. Не добавляй markdown.',
     goal:exJob.task,expectedResult:exJob.result,format:exJob.format,
     plan:exJob.steps.map(x=>({title:x.title,result:x.result})),
     completed:exJob.done.map(d=>({summary:d.summary,next_impulse:d.next_impulse})),step:s,materials:linked,files:Object.fromEntries(Object.entries(exJob.files).map(([name,content])=>[name,content.length>20000?content.slice(0,12000)+'\n[...середина опущена...]\n'+content.slice(-5000):content]))
@@ -566,7 +571,7 @@ function exValidate() {
 }
 function exRender() {
   const p=exId('exec-progress');p.replaceChildren();
-  if(!exJob){p.textContent='Составьте план и запустите сессию.';return}
+  if(!exJob){p.textContent='Введите задачу, составьте план и нажмите «Начать выполнение плана».';exId('exec-start').hidden=false;exId('exec-run').hidden=true;exId('exec-download').hidden=true;return}
   const status=document.createElement('p');
   status.textContent='Шаг '+Math.min(exJob.index+1,exJob.steps.length)+' из '+exJob.steps.length+(exBusy?' · выполняется':exJob.index===exJob.steps.length?' · завершено':' · пауза');
   p.append(status);
@@ -578,6 +583,7 @@ function exRender() {
   const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
   summary.textContent='Журнал';pre.style.whiteSpace='pre-wrap';pre.textContent=exJob.done.map((d,i)=>(i+1)+'. '+d.summary+'\nПроверка: '+d.check+'\nДалее: '+d.next_impulse).join('\n\n');
   details.append(summary,pre);p.append(details);
+  exId('exec-start').hidden=true;exId('exec-run').hidden=exJob.index===exJob.steps.length&&!exBusy;exId('exec-download').hidden=!Object.keys(exJob.files).length;
   exId('exec-run').disabled=exJob.index===exJob.steps.length&&!exBusy;
   exId('exec-run').textContent=exBusy?'Пауза после шага':'Продолжить выполнение';
   exId('exec-download').disabled=!Object.keys(exJob.files).length;
@@ -600,7 +606,7 @@ async function exRun(){
         if(typeof f.name!=='string'||typeof f.content!=='string'||!/^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(f.name)||f.name.includes('..'))throw Error('Некорректное имя файла');
       }
       for(const f of v.files)staged[f.name]=f.content;
-      if(exJob.index>=2 && exJob.format==='pwa' && !v.files.length && !patches.length && /созда|реализ|подключ|измен|обнов|регистр|кэш|service.worker/i.test(exJob.steps[exJob.index].title+' '+exJob.steps[exJob.index].action))throw Error('Модель описала работу, но не вернула изменения файлов. Шаг не засчитан; повторите запрос.');
+      if(exJob.format==='pwa' && !v.files.length && !patches.length && v.no_changes_needed!==true && /созда|реализ|подключ|измен|обнов|регистр|кэш|service.worker/i.test(exJob.steps[exJob.index].title+' '+exJob.steps[exJob.index].action))throw Error('Модель не передала изменений файлов. Этот шаг не засчитан. Повторите запрос.');
       exJob.files=staged;
       exJob.done.push({summary:v.summary,check:v.check,next_impulse:String(v.next_impulse||'')});
       exJob.index++;exSave();exRender();
