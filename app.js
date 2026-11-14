@@ -352,7 +352,7 @@ function openEditor(item) {
   $('catalog').hidden = true;
   $('entry-form').hidden = false;
   status('library-status', '');
-  $('library').scrollTop = 0;
+  $('library').querySelector('.dialog-panel').scrollTop = $('library').scrollTop = 0;
 }
 
 function closeEditor() {

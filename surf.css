@@ -121,14 +121,51 @@ p, small { color: var(--muted); overflow-wrap: anywhere; }
 .danger { color: var(--danger); }
 dialog { position: fixed; inset: 0; width: min(590px, calc(100% - 32px)); max-width: none; max-height: 88vh; max-height: 88dvh; margin: auto; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: var(--lift); overflow: auto; overscroll-behavior: contain; }
 dialog::backdrop { background: var(--overlay); backdrop-filter: blur(5px); }
-dialog > * + *, .settings-section > * + * { margin-top: 12px; }
+.dialog-panel { display: contents; }
+.dialog-dismiss { display: none; }
+.dialog-panel > * + *, .settings-section > * + * { margin-top: 12px; }
 .settings-section { border-top: 1px solid var(--line); padding-top: 12px; }
 .upload { position: relative; display: inline-flex; align-items: center; color: var(--text); }
 .upload input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .upload:focus-within { outline: 2px solid var(--accent); }
 @media (max-width: 599px) {
-  dialog { inset: auto 0 0; width: 100%; margin: 0; border-radius: 16px 16px 0 0; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
   dialog button, .upload { min-height: 44px; }
+  dialog[open] {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    overflow: hidden;
+  }
+  .dialog-panel {
+    display: block;
+    max-height: 88vh;
+    max-height: 88dvh;
+    padding: 16px 16px max(16px, env(safe-area-inset-bottom));
+    border: 1px solid var(--line);
+    border-radius: 16px 16px 0 0;
+    background: var(--bg);
+    box-shadow: var(--lift);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  .dialog-dismiss {
+    display: block;
+    order: -1;
+    flex: 1;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    touch-action: manipulation;
+  }
+  .dialog-dismiss:hover { background: transparent; }
   .step-fields, .filters { grid-template-columns: 1fr; }
   #plan { width: 100%; }
 }
