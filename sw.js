@@ -1,6 +1,6 @@
-const cacheName = 'interactive-engineering-14';
-const files = ['./', './index.html', './surf.css?v=4', './app.js?v=14', './modules/core.js',
-  './modules/execution-context.js?v=14', './modules/library.js', './modules/sync.js', './manifest.webmanifest', './icon.svg', './touch.png'];
+const cacheName = 'interactive-engineering-15';
+const files = ['./', './index.html', './surf.css?v=4', './app.js?v=15', './modules/core.js', './modules/core.js?v=15',
+  './modules/execution-context.js?v=15', './modules/library.js', './modules/sync.js', './manifest.webmanifest', './icon.svg', './touch.png'];
 const urls = new Set(files.map(path => new URL(path, self.registration.scope).href));
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(cacheName).then(cache => cache.addAll(files)).then(() => self.skipWaiting()));

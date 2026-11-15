@@ -1,8 +1,8 @@
-import {askModel, blankAssembly, blankStep, buildPackage, candidates, kinds, managerPrompt, models,
-  readPlan, textLimit, validAssembly, validEntry} from './modules/core.js';
+import {acceptanceLimit, askModel, blankAssembly, blankStep, buildPackage, candidates, kinds, managerPrompt, models,
+  readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=15';
 import {change, edit, entries, read} from './modules/library.js';
 import {cloudIdentity, connectSync} from './modules/sync.js';
-import {executionContext, executionRecord, readExecutionContext} from './modules/execution-context.js?v=14';
+import {executionContext, executionRecord, readExecutionContext} from './modules/execution-context.js?v=15';
 
 const $ = id => document.getElementById(id);
 const status = (id, value) => { $(id).textContent = value; };
@@ -22,7 +22,7 @@ let planning = false;
 
 const exId = $;
 const exStore = 'interactive-engineering:executor-v1';
-let exJob = null, exBusy = false, exPause = false;
+let exJob = null, exBusy = false, exPause = false, exFixing = false;
 try { exJob = JSON.parse(localStorage.getItem(exStore) || 'null'); } catch {}
 
 function node(tag, text, className) {
@@ -165,17 +165,61 @@ function renderSteps() {
     }
     list.append(card);
   });
+  $('acceptance-plan').hidden = assembly.steps.length === 0;
   const atLimit = assembly.steps.length >= 12;
   $('add-step').disabled = atLimit;
   $('add-step-bottom').disabled = atLimit;
   $('add-step-bottom').hidden = assembly.steps.length === 0;
 }
 
+function acceptanceCases() {
+  return (assembly.acceptance || []).map(({action, expected}) => ({action: action.trim(), expected: expected.trim()}))
+    .filter(item => item.action && item.expected);
+}
+
+function renderAcceptanceDraft() {
+  const list = $('acceptance-draft');
+  list.replaceChildren();
+  const cases = assembly.acceptance || [];
+  cases.forEach((item, index) => {
+    const card = node('div', '', 'step');
+    const head = node('div', '', 'panel-head');
+    head.append(node('strong', 'Сценарий ' + (index + 1)), button('Убрать', () => {
+      cases.splice(index, 1);
+      persistDraft();
+      renderAcceptanceDraft();
+    }));
+    card.append(head);
+    for (const [key, title] of [['action', 'Что сделать'], ['expected', 'Ожидаемый результат']]) {
+      const label = node('label', title);
+      const field = node('textarea');
+      field.rows = 2;
+      field.maxLength = 700;
+      field.value = item[key];
+      field.addEventListener('input', () => { item[key] = field.value; persistDraft(); });
+      label.append(field);
+      card.append(label);
+    }
+    list.append(card);
+  });
+  $('acceptance-add').disabled = cases.length >= acceptanceLimit;
+}
+
+$('acceptance-add').addEventListener('click', () => {
+  assembly.acceptance ||= [];
+  if (assembly.acceptance.length >= acceptanceLimit) return;
+  assembly.acceptance.push({action: '', expected: ''});
+  persistDraft();
+  renderAcceptanceDraft();
+  $('acceptance-draft').lastElementChild.querySelector('textarea').focus();
+});
+
 function renderAssembly() {
   $('task').value = assembly.task;
   $('result').value = assembly.result;
   renderSelected();
   renderSteps();
+  renderAcceptanceDraft();
   updatePackage();
 }
 
@@ -248,6 +292,8 @@ $('assembly').addEventListener('submit', async event => {
     const proposed = readPlan(reply, available);
     assembly.result ||= proposed.result;
     assembly.steps = proposed.steps;
+    assembly.acceptance = proposed.acceptance;
+    $('acceptance-plan').open = proposed.acceptance.length > 0;
     reasons = proposed.reasons;
     persistDraft();
     renderAssembly();
@@ -620,7 +666,7 @@ async function exAskStep(job, key) {
       catch { throw Error('Ответ не удалось прочитать как JSON.'); }
       if (!Array.isArray(value?.read)) return {reply: value, files: exApplyResponse(job, value)};
     } catch (error) {
-      if (repairing || exPause || exPlanChanged()) throw error;
+      if (repairing || exPause || (!exFixing && exPlanChanged())) throw error;
       repairing = true;
       messages.push({role: 'assistant', content: 'Предыдущая попытка оформить результат шага отклонена.'},
         {role: 'user', content: 'Исправьте ответ: ' + error.message
@@ -653,7 +699,8 @@ function exPlanChanged() {
     [title, action, result, check, ids]);
   return exJob.task !== assembly.task || exJob.result !== assembly.result
     || JSON.stringify(exJob.globalIds) !== JSON.stringify(assembly.ids)
-    || JSON.stringify(planFields(exJob.steps)) !== JSON.stringify(planFields(assembly.steps));
+    || JSON.stringify(planFields(exJob.steps)) !== JSON.stringify(planFields(assembly.steps))
+    || JSON.stringify(exJob.acceptance || []) !== JSON.stringify(acceptanceCases());
 }
 
 function exUpdateControls(ready = planReady()) {
@@ -663,14 +710,144 @@ function exUpdateControls(ready = planReady()) {
   start.disabled = planning || (changed && !ready);
   start.textContent = exJob ? 'Запустить повторно' : 'Согласовать план';
   const run = exId('exec-run');
-  run.hidden = !exBusy && (!exJob || changed || exJob.index >= exJob.steps.length);
+  run.hidden = exFixing || (!exBusy && (!exJob || changed || exJob.index >= exJob.steps.length));
   run.textContent = exBusy ? 'Пауза после шага' : 'Выполнить план';
   exId('exec-plan-changed').hidden = !changed;
+}
+
+function saveAcceptance(job, review) {
+  const next = {...job, review};
+  try { exSave(next); }
+  catch (error) {
+    status('exec-status', 'Не удалось сохранить приёмку: ' + error.message);
+    return false;
+  }
+  exJob = next;
+  return true;
+}
+
+function renderAcceptanceResult() {
+  const panel = $('acceptance-result');
+  panel.replaceChildren();
+  panel.hidden = !exJob || exJob.index < exJob.steps.length;
+  if (panel.hidden) return;
+
+  const scenarios = exJob.acceptance || [];
+  const review = exJob.review || {};
+  const results = review.results || [];
+  const canReview = scenarios.length > 0 && exValidate().length === 0;
+  const passed = canReview && scenarios.every((_, index) => results[index]?.outcome === 'passed');
+  const failed = results.some(item => item?.outcome === 'failed');
+  let heading = 'Выполнение завершено';
+  if (review.skipped) heading = 'Завершено без приёмки';
+  else if (passed) heading = 'Принято';
+  else if (failed) heading = 'Есть замечания';
+  else if (canReview) heading = 'Готово к приёмке';
+  const title = node('h3', heading);
+  title.setAttribute('role', 'status');
+  panel.append(title);
+  if (review.skipped) {
+    if (canReview) panel.append(button('Вернуться к приёмке', () => {
+      if (saveAcceptance(exJob, {...review, skipped: false})) renderAcceptanceResult();
+    }));
+    return;
+  }
+  if (canReview) {
+    scenarios.forEach(({action, expected}, index) => {
+      const result = results[index] || {};
+      const card = node('div', '', 'step');
+      const caption = result.outcome === 'passed' ? 'Прошло' : result.outcome === 'failed' ? 'Не прошло' : 'Не проверено';
+      card.append(node('strong', (index + 1) + '. ' + action), node('p', 'Ожидается — ' + expected), node('p', caption));
+      const actions = node('div', '', 'row');
+      function mark(outcome) {
+        const updated = [...(exJob.review?.results || [])];
+        updated[index] = {...updated[index], outcome};
+        if (saveAcceptance(exJob, {results: updated})) renderAcceptanceResult();
+      }
+      for (const [label, outcome] of [['Прошло', 'passed'], ['Не прошло', 'failed']]) {
+        const control = button(label, () => mark(outcome));
+        control.disabled = exBusy || result.outcome === outcome;
+        actions.append(control);
+      }
+      card.append(actions);
+      if (result.outcome === 'failed') {
+        const label = node('label', 'Что произошло');
+        const note = node('textarea');
+        note.rows = 2;
+        note.maxLength = 1000;
+        note.value = result.note || '';
+        note.disabled = exBusy;
+        note.addEventListener('input', () => {
+          const updated = [...(exJob.review?.results || [])];
+          updated[index] = {...updated[index], note: note.value};
+          saveAcceptance(exJob, {results: updated});
+        });
+        label.append(note);
+        card.append(label);
+      }
+      panel.append(card);
+    });
+  }
+  if (passed) return;
+  const actions = node('div', '', 'row');
+  if (canReview && failed) {
+    const fix = button('Исправить замечания', exRepairAcceptance, 'primary');
+    fix.disabled = exBusy;
+    actions.append(fix);
+  }
+  const skip = button('Завершить без приёмки', () => {
+    if (saveAcceptance(exJob, {...exJob.review, skipped: true})) renderAcceptanceResult();
+  });
+  skip.disabled = exBusy;
+  actions.append(skip);
+  panel.append(actions);
+}
+
+async function exRepairAcceptance() {
+  if (exBusy || !exJob || exJob.review?.skipped) return;
+  const original = exJob;
+  const feedback = (original.acceptance || []).flatMap((scenario, index) => {
+    const result = original.review?.results?.[index];
+    return result?.outcome === 'failed' ? [{...scenario, observed: result.note || ''}] : [];
+  });
+  if (!feedback.length) return;
+  const key = get('key-' + original.model);
+  if (!key) {
+    status('exec-status', 'API-ключ не найден в настройках.');
+    return;
+  }
+
+  const repair = {title: 'Доработка по приёмке',
+    action: 'Исправьте только указанные замечания в текущих файлах.',
+    result: 'Исправленные файлы проекта.',
+    check: 'Сверьте правки с непройденными сценариями и сохраните остальное поведение.',
+    ids: []};
+  const job = {...original, steps: [...original.steps, repair], repairFeedback: feedback};
+  exBusy = exFixing = true;
+  exPause = false;
+  status('exec-status', '');
+  exRender();
+  try {
+    const {reply, files} = await exAskStep(job, key);
+    const record = executionRecord(reply, original.files, files);
+    if (record.check_status === 'failed') throw Error('Модель сообщила, что проверка не пройдена. ' + record.check);
+    if (!record.changed_files.length) throw Error('Модель не вернула изменений в файлах.');
+    const next = {...original, files, review: {results: []}, done: [...original.done, record]};
+    exSave(next);
+    exJob = next;
+    status('exec-status', 'Исправления сохранены. Проверьте сценарии на обновлённых файлах.');
+  } catch (error) {
+    status('exec-status', 'Доработка не завершена: ' + error.message);
+  } finally {
+    exBusy = exFixing = false;
+    exRender();
+  }
 }
 
 function exRender() {
   exUpdateControls();
   const p=exId('exec-progress');p.replaceChildren();
+  renderAcceptanceResult();
   if(!exJob){p.textContent='Введите задачу, составьте план и нажмите «Согласовать план».';exId('exec-download').hidden=true;return}
   const stepProgress = 'Шаг ' + Math.min(exJob.index + 1, exJob.steps.length) + ' из ' + exJob.steps.length;
   const progress = node('p');
@@ -678,7 +855,7 @@ function exRender() {
     progress.className = 'execution-progress';
     const spinner = node('span', '', 'execution-spinner');
     spinner.setAttribute('aria-hidden', 'true');
-    progress.append(spinner, node('span', 'План выполняется · ' + stepProgress));
+    progress.append(spinner, node('span', exFixing ? 'Исправляю замечания приёмки' : 'План выполняется · ' + stepProgress));
   } else {
     progress.textContent = stepProgress + (exJob.index === exJob.steps.length ? ' · завершено' : ' · пауза');
   }
@@ -723,7 +900,6 @@ async function exRun(){
     }catch(e){exPause=true;exId('exec-status').textContent='Остановлено на шаге '+(exJob.index+1)+': '+e.message}
   }
   exBusy=false;exRender();
-  if(exJob.index===exJob.steps.length)exId('exec-status').textContent='Выполнение завершено. Скачайте результат и проверьте его.';
 }
 function exCrc(data){let c=-1;for(const b of data){c^=b;for(let i=0;i<8;i++)c=c&1?(c>>>1)^0xedb88320:c>>>1}return(c^-1)>>>0}
 function exZip(files){
@@ -760,6 +936,7 @@ exId('exec-start').addEventListener('click',()=>{
     && !confirm('Запустить изменённый план с первого шага? Текущий прогресс и файлы этой сессии будут заменены.')) return;
   const materialIds = new Set([...assembly.ids, ...assembly.steps.flatMap(step => step.ids)]);
   const job={task:assembly.task,result:assembly.result,steps:structuredClone(assembly.steps),globalIds:[...assembly.ids],
+    acceptance: acceptanceCases(),
     materials:structuredClone(materials().filter(item => materialIds.has(item.id))),model,format:exId('exec-format').value,index:0,done:[],files:{}};
   if(job.format==='pwa'){for(const m of job.materials){const name=(m.source||m.title||'').split('/').pop();if(['index.html','sw.js','manifest.json','manifest.webmanifest','README.md'].includes(name)&&m.text)job.files[name]=m.text}}
   try { exSave(job); }
