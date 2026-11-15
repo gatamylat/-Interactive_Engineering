@@ -1,8 +1,9 @@
 import {acceptanceLimit, askModel, blankAssembly, blankStep, buildPackage, candidates, kinds, managerPrompt, models,
-  readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=15';
+  readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=18';
 import {change, edit, entries, read} from './modules/library.js';
 import {cloudIdentity, connectSync} from './modules/sync.js';
-import {executionContext, executionRecord, readExecutionContext} from './modules/execution-context.js?v=15';
+import {executionContext, executionRecord, readExecutionContext} from './modules/execution-context.js?v=18';
+import {buildSingleHtml} from './modules/single-html.js?v=18';
 
 const $ = id => document.getElementById(id);
 const status = (id, value) => { $(id).textContent = value; };
@@ -292,7 +293,7 @@ $('assembly').addEventListener('submit', async event => {
   const current = profile;
   const original = JSON.stringify(assembly);
   const available = candidates([assembly.task, assembly.result].join(' '), materials(), assembly.ids);
-  const prompt = managerPrompt(assembly, available);
+  const prompt = managerPrompt(assembly, available, $('exec-format').value);
   planning = true;
   updatePackage();
   status('plan-status', models[chosenModel] + ' составляет план…');
@@ -630,9 +631,13 @@ function exApplyResponse(job, reply) {
     throw Error('В ответе нужны текстовые поля summary и check.');
   }
   const {files = [], patches = []} = reply;
+  const bundling = job.format === 'html' && Object.hasOwn(reply, 'bundle');
   if (!Array.isArray(files) || !Array.isArray(patches)
-    || (!Array.isArray(reply.files) && !Array.isArray(reply.patches) && reply.no_changes_needed !== true)) {
+    || (!Array.isArray(reply.files) && !Array.isArray(reply.patches) && reply.no_changes_needed !== true && !bundling)) {
     throw Error('Верните массив files или patches. Для проверки без изменений укажите no_changes_needed: true.');
+  }
+  if (bundling && (files.length || patches.length)) {
+    throw Error('Для сборки передайте bundle с уже сохранёнными файлами. Правки шаблона или модулей сохраняются на предыдущем шаге.');
   }
 
   const staged = {...job.files};
@@ -664,7 +669,27 @@ function exApplyResponse(job, reply) {
     && /созда|реализ|подключ|измен|обнов|регистр|кэш|service.worker/i.test(step.title + ' ' + step.action)) {
     throw Error('Модель не передала изменений файлов. Этот шаг не засчитан.');
   }
-  return staged;
+  const htmlBundle = bundling ? reply.bundle : job.htmlBundle;
+  if (job.format === 'html') {
+    if (bundling || htmlBundle) buildSingleHtml(staged, htmlBundle);
+    else if (job.singleHtmlAssembly && job.index + 1 === job.steps.length) {
+      if (!staged['index.html']?.trim()) throw Error('Сборка HTML: нет итогового index.html.');
+      if (Object.keys(staged).some(name => /\.(js|css)$/i.test(name))) {
+        throw Error('Сборка HTML: найдены отдельные JS/CSS-файлы. Верните bundle, чтобы вставить их в шаблон.');
+      }
+    }
+  }
+  return {files: staged, htmlBundle};
+}
+
+function exOutputFiles(job) {
+  if (job.format === 'html' && job.htmlBundle) {
+    return {'index.html': buildSingleHtml(job.files, job.htmlBundle)};
+  }
+  if (job.format === 'html' && job.singleHtmlAssembly && job.index === job.steps.length) {
+    return {'index.html': job.files['index.html']};
+  }
+  return job.files;
 }
 
 async function exAskStep(job, key) {
@@ -678,7 +703,7 @@ async function exAskStep(job, key) {
     try {
       try { value = exParse(reply); }
       catch { throw Error('Ответ не удалось прочитать как JSON.'); }
-      if (!Array.isArray(value?.read)) return {reply: value, files: exApplyResponse(job, value)};
+      if (!Array.isArray(value?.read)) return {reply: value, ...exApplyResponse(job, value)};
     } catch (error) {
       if (repairing || exPause || (!exFixing && exPlanChanged())) throw error;
       repairing = true;
@@ -703,7 +728,11 @@ function exValidate() {
     if(f['manifest.webmanifest']||f['manifest.json'])try {JSON.parse(f['manifest.webmanifest']||f['manifest.json'])}catch{errors.push('Некорректный manifest')}
     if(f['index.html']&&!f['index.html'].includes('serviceWorker'))errors.push('Нет регистрации service worker');
   }
-  if(exJob.format==='html'&&!f['index.html'])errors.push('Нет index.html');
+  if (exJob.format === 'html') {
+    try {
+      if (!exOutputFiles(exJob)['index.html']?.trim()) errors.push('Нет index.html');
+    } catch (error) { errors.push(error.message); }
+  }
   if(exJob.format==='document'&&!f['result.md'])errors.push('Нет result.md');
   return errors;
 }
@@ -842,11 +871,13 @@ async function exRepairAcceptance() {
   status('exec-status', '');
   exRender();
   try {
-    const {reply, files} = await exAskStep(job, key);
+    const {reply, files, htmlBundle} = await exAskStep(job, key);
     const record = executionRecord(reply, original.files, files);
     if (record.check_status === 'failed') throw Error('Модель сообщила, что проверка не пройдена. ' + record.check);
-    if (!record.changed_files.length) throw Error('Модель не вернула изменений в файлах.');
-    const next = {...original, files, review: {results: []}, done: [...original.done, record]};
+    const next = {...original, files, htmlBundle, review: {results: []}, done: [...original.done, record]};
+    if (!record.changed_files.length && exOutputFiles(original)['index.html'] === exOutputFiles(next)['index.html']) {
+      throw Error('Модель не вернула изменений в файлах.');
+    }
     exSave(next);
     exJob = next;
     status('exec-status', 'Исправления сохранены. Проверьте сценарии на обновлённых файлах.');
@@ -877,7 +908,7 @@ function exRender() {
   const ol=document.createElement('ol');
   exJob.steps.forEach((s,i)=>{const li=document.createElement('li');li.textContent=(i<exJob.index?'✓ ':i===exJob.index?'▶ ':'○ ')+s.title;ol.append(li)});
   p.append(ol);
-  const names=Object.keys(exJob.files);if(names.length){const files=document.createElement('details');const heading=document.createElement('summary');heading.textContent='Отдельные файлы ('+names.length+')';files.append(heading);const info=document.createElement('p');info.textContent='Обычно достаточно кнопки «Скачать файлы» ниже.';files.append(info);for(const name of names){const b=document.createElement('button');b.type='button';b.textContent='↓ '+name;b.style.cssText='display:block;margin:6px 0;max-width:100%;overflow-wrap:anywhere';b.addEventListener('click',()=>exDownloadFile(name));files.append(b)}p.append(files)}
+  const names=Object.keys(exJob.files);if(names.length){const files=document.createElement('details');const heading=document.createElement('summary');heading.textContent='Отдельные файлы ('+names.length+')';files.append(heading);const info=document.createElement('p');info.textContent='Основной результат можно скачать кнопкой ниже.';files.append(info);for(const name of names){const b=document.createElement('button');b.type='button';b.textContent='↓ '+(name === 'index.html' && exJob.htmlBundle ? 'Шаблон index.html' : name);b.style.cssText='display:block;margin:6px 0;max-width:100%;overflow-wrap:anywhere';b.addEventListener('click',()=>exDownloadFile(name));files.append(b)}p.append(files)}
   if(exJob.index===exJob.steps.length){const e=exValidate();if(e.length){const x=document.createElement('p');x.textContent='Требует проверки: '+e.join('; ');p.append(x)}}
   const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
   const checkLabels = {passed: 'пройдена по отчёту модели', not_run: 'не выполнена или не подтверждена'};
@@ -891,8 +922,10 @@ function exRender() {
     record.next_impulse && 'Далее: ' + record.next_impulse,
   ].filter(Boolean).join('\n')).join('\n\n');
   details.append(summary,pre);p.append(details);
-  exId('exec-download').hidden=!Object.keys(exJob.files).length;
-  exId('exec-download').disabled=!Object.keys(exJob.files).length;
+  const download = exId('exec-download');
+  download.hidden = download.disabled = !names.length;
+  download.textContent = exJob.format === 'html' && exJob.index < exJob.steps.length
+    ? 'Скачать черновик' : 'Скачать файлы';
 }
 async function exRun(){
   if(exBusy){exPause=true;return}
@@ -904,10 +937,13 @@ async function exRun(){
   exRender();
   while(!exPause&&!exPlanChanged()&&exJob.index<exJob.steps.length){
     try{
-      const {reply: v, files: staged} = await exAskStep(exJob, key);
+      const {reply: v, files: staged, htmlBundle} = await exAskStep(exJob, key);
       const record = executionRecord(v, exJob.files, staged);
+      if (exJob.format === 'html' && Object.hasOwn(v, 'bundle')) {
+        record.changed_files = [...new Set([...record.changed_files, 'index.html'])];
+      }
       if (record.check_status === 'failed') throw Error('Проверка шага по отчёту модели не пройдена. ' + record.check);
-      const next = {...exJob, files: staged, done: [...exJob.done, record], index: exJob.index + 1};
+      const next = {...exJob, files: staged, htmlBundle, done: [...exJob.done, record], index: exJob.index + 1};
       exSave(next);
       exJob = next;
       exRender();
@@ -932,7 +968,10 @@ function exZip(files){
 function exDownloadFile(name){if(!exJob||typeof exJob.files[name]!=='string')return;const blob=new Blob([exJob.files[name]],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name.split('/').pop();a.click();setTimeout(()=>URL.revokeObjectURL(url),10000)}
 function exDownload(){
   if(!exJob)return;
-  const entries=Object.entries(exJob.files);if(!entries.length)return;
+  let entries;
+  try { entries = Object.entries(exOutputFiles(exJob)); }
+  catch (error) { status('exec-status', error.message); return; }
+  if (!entries.length) return;
   const blob=entries.length===1?new Blob([entries[0][1]],{type:'text/plain;charset=utf-8'}):exZip(exJob.files);
   const url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=entries.length===1?entries[0][0]:'engineering-result.zip';a.click();
@@ -952,6 +991,7 @@ exId('exec-start').addEventListener('click',()=>{
   const job={task:assembly.task,result:assembly.result,steps:structuredClone(assembly.steps),globalIds:[...assembly.ids],
     acceptance: acceptanceCases(),
     materials:structuredClone(materials().filter(item => materialIds.has(item.id))),model,format:exId('exec-format').value,index:0,done:[],files:{}};
+  if (job.format === 'html') job.singleHtmlAssembly = true;
   if(job.format==='pwa'){for(const m of job.materials){const name=(m.source||m.title||'').split('/').pop();if(['index.html','sw.js','manifest.json','manifest.webmanifest','README.md'].includes(name)&&m.text)job.files[name]=m.text}}
   try { exSave(job); }
   catch(e) { exId('exec-status').textContent=e.message; return; }
