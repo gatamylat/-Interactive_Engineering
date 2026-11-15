@@ -54,7 +54,7 @@ function updatePackage() {
   $('copy').disabled = !ready;
   $('download').disabled = !ready;
   $('save-recipe').disabled = !state || !assembly.task.trim();
-  $('plan').disabled = planning || !state || !assembly.task.trim();
+  $('plan').disabled = planning || !state || !assembly.task.trim() || !$('model').value;
   exUpdateControls(ready);
 }
 
@@ -254,7 +254,20 @@ async function save(update) {
 for (const [input, key] of [['task', 'task'], ['result', 'result']]) {
   $(input).addEventListener('input', () => { assembly[key] = $(input).value; persistDraft(); });
 }
-$('model').value = get('model') === 'deepseek' ? 'deepseek' : 'claude';
+function updateModelOptions() {
+  const select = $('model');
+  const preferred = get('model') === 'deepseek' ? 'deepseek' : 'claude';
+  for (const option of select.options) {
+    if (!option.value) continue;
+    option.disabled = !get('key-' + option.value).trim();
+    option.textContent = models[option.value] + (option.disabled ? ' — нет ключа' : '');
+  }
+  const available = [...select.options].filter(option => option.value && !option.disabled);
+  select.value = available.find(option => option.value === preferred)?.value ?? available[0]?.value ?? '';
+  $('model-key-hint').hidden = available.length > 0;
+}
+
+updateModelOptions();
 $('model').addEventListener('change', () => { set('model', $('model').value); updatePackage(); });
 function addStep() {
   if (assembly.steps.length >= 12) return;
@@ -268,7 +281,7 @@ $('add-step-bottom').addEventListener('click', addStep);
 
 $('assembly').addEventListener('submit', async event => {
   event.preventDefault();
-  if (planning || !state || !assembly.task.trim()) return;
+  if (planning || !state || !assembly.task.trim() || !$('model').value) return;
   const chosenModel = $('model').value;
   const key = get('key-' + chosenModel);
   if (!key) {
@@ -538,6 +551,7 @@ for (const name of Object.keys(models)) $('key-' + name).value = get('key-' + na
 $('save-keys').addEventListener('click', () => {
   for (const name of Object.keys(models)) set('key-' + name, $('key-' + name).value.trim());
   status('key-status', 'Ключи сохранены на этом устройстве.');
+  updateModelOptions();
   updatePackage();
 });
 $('generate-code').addEventListener('click', () => {

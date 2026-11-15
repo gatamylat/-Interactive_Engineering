@@ -81,6 +81,8 @@ h3 { font-size: 18px; }
 .shell { max-width: 780px; margin: auto; padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
 .masthead, .panel-head, .row, .brand { display: flex; align-items: center; gap: 8px; }
 .masthead, .panel-head { justify-content: space-between; }
+.panel-head { align-items: baseline; }
+.panel-head > [data-close] { align-self: center; }
 .masthead { position: relative; z-index: 1; min-height: 68px; border-bottom: 1px solid var(--line); }
 .brand svg, .icon-button svg { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
 .brand svg { color: var(--accent-ink); }
@@ -95,7 +97,14 @@ main { padding-top: 20px; }
 .workspace-card > * + *, dialog section > * + *, #entry-form > * + * { margin-top: 10px; }
 button, select, input, textarea, summary, .upload { font: inherit; color: inherit; }
 button, .upload, summary { min-height: 42px; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer; font-weight: 500; }
-button:hover, summary:hover, .upload:hover { background: var(--wash); }
+button:where(:not(.primary, .icon-button, .dialog-dismiss)), .upload {
+  background: var(--wash);
+  border-color: var(--line);
+}
+button:where(:not(.primary, .dialog-dismiss)):enabled:hover, summary:hover, .upload:hover {
+  background: var(--wash);
+  border-color: var(--control-line);
+}
 button:disabled { opacity: .55; cursor: default; }
 button.primary { background: var(--accent-button); color: var(--on-accent); font-weight: 600; }
 .icon-button { width: 44px; display: grid; place-items: center; flex: none; padding: 0; }
@@ -108,7 +117,9 @@ label > input, label > select, label > textarea { margin-top: 4px; color: var(--
 textarea { resize: vertical; min-height: 48px; }
 textarea::placeholder, input::placeholder { color: var(--placeholder); }
 .model-label { display: flex; align-items: center; gap: 8px; }
-.model-label select { width: auto; margin: 0; }
+.model-label { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+.model-label select { width: auto; max-width: 100%; margin: 0; }
+#model:has(option:checked:disabled), #model option:disabled { color: var(--muted); }
 .planner-actions { justify-content: space-between; }
 p, small { color: var(--muted); overflow-wrap: anywhere; }
 .execution-progress { display: flex; align-items: center; gap: 8px; }

@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://www.gstatic.com https://*.googleapis.com https://api.anthropic.com https://api.deepseek.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=Playfair+Display:wght@500;600&amp;display=swap">
-<link rel="stylesheet" href="./surf.css?v=4">
+<link rel="stylesheet" href="./surf.css?v=5">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="./touch.png">
@@ -23,7 +23,7 @@
       <button type="button" data-section="expectation" data-open="library">Ожидания</button>
       <button type="button" data-section="recipe" data-open="library">Рецепты</button>
       <button type="button" data-open="settings">Настройки</button>
-      <span id="app-version" aria-label="Версия приложения" style="display:block;padding:10px 14px;font-size:12px;opacity:.7">Версия 0.6.9</span>
+      <span id="app-version" aria-label="Версия приложения" style="display:block;padding:10px 14px;font-size:12px;opacity:.7">Версия 0.6.10</span>
     </nav>
   </header>
   <main>
@@ -32,12 +32,19 @@
         <h2 class="required-caption">Задача<span class="required-mark" aria-hidden="true">*</span></h2>
         <textarea id="task" aria-label="Задача" rows="3" maxlength="12000" placeholder="Что хотите сделать или продолжить?" required></textarea>
         <div class="row planner-actions">
-          <label class="model-label">ИИ-менеджер <select id="model"><option value="claude">Claude</option><option value="deepseek">DeepSeek</option></select></label>
+          <label class="model-label">ИИ-менеджер
+            <select id="model" aria-describedby="model-key-hint">
+              <option value="" disabled selected hidden>Выбрать модель</option>
+              <option value="claude">Claude</option>
+              <option value="deepseek">DeepSeek</option>
+            </select>
+          </label>
           <div class="row">
             <button id="plan" class="primary" type="submit" disabled>Составить план</button>
             <button id="exec-reset-top" type="button">Новый проект с нуля</button>
           </div>
         </div>
+        <p id="model-key-hint" hidden>Добавьте API-ключ модели в настройках.</p>
         <p id="plan-status" role="status"></p>
       </section>
 
@@ -156,6 +163,6 @@
   </div>
   <button class="dialog-dismiss" type="button" data-close tabindex="-1" aria-label="Закрыть окно"></button>
 </dialog>
-<script type="module" src="./app.js?v=15"></script>
+<script type="module" src="./app.js?v=16"></script>
 </body>
 </html>
