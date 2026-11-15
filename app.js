@@ -2,7 +2,7 @@ import {askModel, blankAssembly, blankStep, buildPackage, candidates, kinds, man
   readPlan, textLimit, validAssembly, validEntry} from './modules/core.js';
 import {change, edit, entries, read} from './modules/library.js';
 import {cloudIdentity, connectSync} from './modules/sync.js';
-import {executionContext, executionRecord, readExecutionContext} from './modules/execution-context.js';
+import {executionContext, executionRecord, readExecutionContext} from './modules/execution-context.js?v=14';
 
 const $ = id => document.getElementById(id);
 const status = (id, value) => { $(id).textContent = value; };
@@ -565,16 +565,70 @@ function exParse(raw) {
   const s = raw.replace(/^\s*\x60\x60\x60(?:json)?/i, '').replace(/\x60\x60\x60\s*$/, '').trim();
   try { return JSON.parse(s); } catch { const a=s.indexOf('{'), b=s.lastIndexOf('}'); return JSON.parse(s.slice(a,b+1)); }
 }
+function exApplyResponse(job, reply) {
+  if (typeof reply?.summary !== 'string' || typeof reply.check !== 'string') {
+    throw Error('В ответе нужны текстовые поля summary и check.');
+  }
+  const {files = [], patches = []} = reply;
+  if (!Array.isArray(files) || !Array.isArray(patches)
+    || (!Array.isArray(reply.files) && !Array.isArray(reply.patches) && reply.no_changes_needed !== true)) {
+    throw Error('Верните массив files или patches. Для проверки без изменений укажите no_changes_needed: true.');
+  }
+
+  const staged = {...job.files};
+  const validName = name => typeof name === 'string'
+    && /^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(name) && !name.includes('..');
+  for (const patch of patches) {
+    if (!validName(patch?.name) || typeof patch.find !== 'string' || !patch.find
+      || typeof patch.replace !== 'string') throw Error('Некорректная точечная правка.');
+    const {name, find, replace} = patch;
+    const base = Object.hasOwn(staged, name) ? staged[name] : undefined;
+    if (typeof base !== 'string') throw Error('Нет файла для правки: ' + name);
+    const pos = base.indexOf(find);
+    const next = pos < 0 ? -1 : base.indexOf(find, pos + 1);
+    if (pos < 0 || next >= 0) {
+      const reason = pos < 0 ? 'фрагмент отсутствует' : 'несколько совпадений около позиций ' + pos + ' и ' + next;
+      throw Error(name + ': ' + reason + '. Начало find: ' + JSON.stringify(find.slice(0, 180))
+        + '. Прочитайте актуальный фрагмент и используйте точное уникальное совпадение.');
+    }
+    staged[name] = base.slice(0, pos) + replace + base.slice(pos + find.length);
+  }
+  for (const file of files) {
+    if (!validName(file?.name) || typeof file.content !== 'string') {
+      throw Error('Некорректное имя или содержимое файла.');
+    }
+    Object.defineProperty(staged, file.name, {value: file.content, enumerable: true, writable: true, configurable: true});
+  }
+  const step = job.steps[job.index];
+  if (job.format === 'pwa' && !files.length && !patches.length && reply.no_changes_needed !== true
+    && /созда|реализ|подключ|измен|обнов|регистр|кэш|service.worker/i.test(step.title + ' ' + step.action)) {
+    throw Error('Модель не передала изменений файлов. Этот шаг не засчитан.');
+  }
+  return staged;
+}
+
 async function exAskStep(job, key) {
   const messages = [{role: 'user', content: JSON.stringify(executionContext(job))}];
   const seen = new Set();
-  for (let attempt = 0; attempt <= 4; attempt++) {
+  let repairing = false;
+  while (true) {
     const reply = await askModel(job.model, key, messages, fetch,
       {maxTokens:12000, timeoutMs:180000, requireComplete:true});
-    const value = exParse(reply);
-    if (!Array.isArray(value?.read)) return value;
+    let value;
+    try {
+      try { value = exParse(reply); }
+      catch { throw Error('Ответ не удалось прочитать как JSON.'); }
+      if (!Array.isArray(value?.read)) return {reply: value, files: exApplyResponse(job, value)};
+    } catch (error) {
+      if (repairing || exPause || exPlanChanged()) throw error;
+      repairing = true;
+      messages.push({role: 'assistant', content: 'Предыдущая попытка оформить результат шага отклонена.'},
+        {role: 'user', content: 'Исправьте ответ: ' + error.message
+          + ' Файлы предыдущей попытки не применены. Верните весь результат текущего шага в указанном формате.'});
+      continue;
+    }
     const excerpts = JSON.stringify(readExecutionContext(job, value.read));
-    if (attempt === 4 || seen.has(excerpts)) {
+    if (seen.size === 4 || seen.has(excerpts)) {
       throw Error('Модель не завершила шаг после чтения фрагментов. Уточните в плане, какой участок нужен, или повторите шаг.');
     }
     seen.add(excerpts);
@@ -654,19 +708,12 @@ async function exRun(){
   if(!exJob||exJob.index>=exJob.steps.length||exPlanChanged())return;
   const key=get('key-'+exJob.model);
   if(!key){exId('exec-status').textContent='API-ключ не найден в настройках.';return}
-  exPause=false;exBusy=true;exRender();
+  exPause=false;exBusy=true;
+  exId('exec-status').textContent = '';
+  exRender();
   while(!exPause&&!exPlanChanged()&&exJob.index<exJob.steps.length){
     try{
-      const v = await exAskStep(exJob, key);
-      if(typeof v?.summary!=='string'||typeof v.check!=='string'||!Array.isArray(v.files))throw Error('Неполный ответ модели');
-      const patches=Array.isArray(v.patches)?v.patches:[];
-      const staged={...exJob.files};
-      for(const p of patches){if(typeof p.name!=='string'||typeof p.find!=='string'||typeof p.replace!=='string'||!p.find)throw Error('Некорректная точечная правка');if(!/^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(p.name)||p.name.includes('..'))throw Error('Недопустимое имя файла');const base=staged[p.name];if(typeof base!=='string')throw Error('Нет файла для правки: '+p.name);const pos=base.indexOf(p.find);if(pos<0||base.indexOf(p.find,pos+1)>=0)throw Error('Фрагмент для правки не найден или неоднозначен: '+p.name);staged[p.name]=base.slice(0,pos)+p.replace+base.slice(pos+p.find.length)}
-      for(const f of v.files){
-        if(typeof f.name!=='string'||typeof f.content!=='string'||!/^[a-zA-Z0-9_-][a-zA-Z0-9_./-]{0,100}$/.test(f.name)||f.name.includes('..'))throw Error('Некорректное имя файла');
-      }
-      for(const f of v.files)staged[f.name]=f.content;
-      if(exJob.format==='pwa' && !v.files.length && !patches.length && v.no_changes_needed!==true && /созда|реализ|подключ|измен|обнов|регистр|кэш|service.worker/i.test(exJob.steps[exJob.index].title+' '+exJob.steps[exJob.index].action))throw Error('Модель не передала изменений файлов. Этот шаг не засчитан. Повторите запрос.');
+      const {reply: v, files: staged} = await exAskStep(exJob, key);
       const record = executionRecord(v, exJob.files, staged);
       if (record.check_status === 'failed') throw Error('Проверка шага по отчёту модели не пройдена. ' + record.check);
       const next = {...exJob, files: staged, done: [...exJob.done, record], index: exJob.index + 1};
