@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://www.gstatic.com https://*.googleapis.com https://api.anthropic.com https://api.deepseek.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=Playfair+Display:wght@500;600&amp;display=swap">
-<link rel="stylesheet" href="./surf.css?v=6">
+<link rel="stylesheet" href="./surf.css?v=7">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="./touch.png">
@@ -23,7 +23,7 @@
       <button type="button" data-section="expectation" data-open="library">Ожидания</button>
       <button type="button" data-section="recipe" data-open="library">Рецепты</button>
       <button type="button" data-open="settings">Настройки</button>
-      <span id="app-version" aria-label="Версия приложения" style="display:block;padding:10px 14px;font-size:12px;opacity:.7">Версия 0.6.12</span>
+      <span id="app-version" aria-label="Версия приложения" style="display:block;padding:10px 14px;font-size:12px;opacity:.7">Версия 0.6.13</span>
     </nav>
   </header>
   <main>
@@ -48,13 +48,15 @@
         <p id="plan-status" role="status"></p>
       </section>
 
-      <section class="paper workspace-card">
-        <div class="panel-head"><h2>Кирпичики</h2><button type="button" id="pick">Добавить из библиотеки</button></div>
+      <details class="paper workspace-card">
+        <summary class="fold-summary"><h2>Кирпичики</h2></summary>
+        <button type="button" id="pick">Добавить из библиотеки</button>
         <div id="selected"></div>
-      </section>
+      </details>
 
-      <section class="paper workspace-card">
-        <div class="panel-head"><h2>Рабочий план</h2><button type="button" id="add-step">Добавить шаг</button></div>
+      <details class="paper workspace-card" id="working-plan">
+        <summary class="fold-summary"><h2>Рабочий план</h2></summary>
+        <button type="button" id="add-step">Добавить шаг</button>
         <label><span class="required-caption">Ожидаемый результат<span class="required-mark" aria-hidden="true">*</span></span><textarea id="result" aria-required="true" rows="2" maxlength="4000" placeholder="Что вы хотите получить на выходе?"></textarea></label>
         <div id="steps"></div>
         <button type="button" id="add-step-bottom" hidden>Добавить шаг</button>
@@ -64,7 +66,7 @@
           <div id="acceptance-draft"></div>
           <button type="button" id="acceptance-add">Добавить сценарий</button>
         </details>
-      </section>
+      </details>
 
       <section class="paper workspace-card">
         <h2>Автономное выполнение</h2>
@@ -163,6 +165,7 @@
   </div>
   <button class="dialog-dismiss" type="button" data-close tabindex="-1" aria-label="Закрыть окно"></button>
 </dialog>
-<script type="module" src="./app.js?v=18"></script>
+<div id="exec-notice" role="status"></div>
+<script type="module" src="./app.js?v=19"></script>
 </body>
 </html>

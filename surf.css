@@ -130,6 +130,25 @@ p, small { color: var(--muted); overflow-wrap: anywhere; }
   .execution-spinner { animation: none; }
 }
 [role="status"]:empty { display: none; }
+.fold-summary h2 { display: inline; vertical-align: middle; }
+.journal { position: relative; }
+.journal summary { padding-inline-end: 9rem; }
+.journal pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.journal-copy { position: absolute; inset-block-start: 0; inset-inline-end: 0; }
+#exec-notice {
+  position: fixed;
+  inset-inline-end: max(12px, env(safe-area-inset-right));
+  inset-block-end: calc(12px + env(safe-area-inset-bottom));
+  z-index: 2;
+  padding: 7px 12px;
+  border-radius: 8px;
+  color: var(--paper);
+  background: var(--text);
+  box-shadow: var(--lift);
+  font-weight: 500;
+  pointer-events: none;
+}
+#exec-notice:empty { display: block; opacity: 0; }
 #selected, #steps, .item-list { display: grid; gap: 8px; }
 .step, .item, .selected-item { border-top: 1px solid var(--line); padding-top: 8px; overflow-wrap: anywhere; min-width: 0; }
 .step { display: grid; gap: 8px; margin-top: 4px; }

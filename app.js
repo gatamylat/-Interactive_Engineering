@@ -24,6 +24,7 @@ let planning = false;
 const exId = $;
 const exStore = 'interactive-engineering:executor-v1';
 let exJob = null, exBusy = false, exPause = false, exFixing = false;
+let exNoticeTimer;
 try { exJob = JSON.parse(localStorage.getItem(exStore) || 'null'); } catch {}
 
 function node(tag, text, className) {
@@ -616,10 +617,17 @@ function exArchive(){if(!exJob)return false;const items=exArchives();const name=
 function exReset(){
   if(exBusy){exId('exec-status').textContent='Сначала приостановите выполнение.';return}
   if(!confirm('Создать полностью новый проект? Будут очищены задача, план, выбранные кирпичики и текущее выполнение. Библиотека и сохранённые проекты останутся.'))return;
+  exNotice('');
   exJob=null;localStorage.removeItem(exStore);assembly=blankAssembly();recipeId=undefined;recipeRev=undefined;reasons={};
   persistDraft();renderAssembly();exId('exec-status').textContent='Новый проект готов. Введите задачу и составьте план.';status('plan-status','');status('package-status','');exRender();$('task').focus();
 }
-function exRestore(){if(exBusy)return;const items=exArchives();if(!items.length){exId('exec-status').textContent='Сохранённых проектов пока нет.';return}const list=items.map((x,i)=>(i+1)+'. '+x.name+' · '+new Date(x.created).toLocaleDateString('ru-RU')+' · шаг '+(x.job.index+1)).join('\n');const answer=prompt('Введите номер проекта:\n'+list);if(!answer)return;const i=Number(answer)-1;if(!Number.isInteger(i)||!items[i])return;exJob=structuredClone(items[i].job);assembly=structuredClone(items[i].assembly);persistDraft();renderAssembly();exSave();exId('exec-format').value=exJob.format;exId('exec-status').textContent='Проект восстановлен: '+items[i].name;exRender()}
+function exRestore(){if(exBusy)return;const items=exArchives();if(!items.length){exId('exec-status').textContent='Сохранённых проектов пока нет.';return}const list=items.map((x,i)=>(i+1)+'. '+x.name+' · '+new Date(x.created).toLocaleDateString('ru-RU')+' · шаг '+(x.job.index+1)).join('\n');const answer=prompt('Введите номер проекта:\n'+list);if(!answer)return;const i=Number(answer)-1;if(!Number.isInteger(i)||!items[i])return;exNotice('');exJob=structuredClone(items[i].job);assembly=structuredClone(items[i].assembly);persistDraft();renderAssembly();exSave();exId('exec-format').value=exJob.format;exId('exec-status').textContent='Проект восстановлен: '+items[i].name;exRender()}
+
+function exNotice(text, temporary = false) {
+  clearTimeout(exNoticeTimer);
+  status('exec-notice', text);
+  if (temporary) exNoticeTimer = setTimeout(() => status('exec-notice', ''), 5500);
+}
 
 function exSave(job = exJob) { localStorage.setItem(exStore, JSON.stringify(job)); }
 function exParse(raw) {
@@ -869,6 +877,7 @@ async function exRepairAcceptance() {
   exBusy = exFixing = true;
   exPause = false;
   status('exec-status', '');
+  exNotice('План выполняется');
   exRender();
   try {
     const {reply, files, htmlBundle} = await exAskStep(job, key);
@@ -885,13 +894,17 @@ async function exRepairAcceptance() {
     status('exec-status', 'Доработка не завершена: ' + error.message);
   } finally {
     exBusy = exFixing = false;
+    if (exJob === original) exNotice('Остановлено', true);
+    else exNotice('');
     exRender();
   }
 }
 
 function exRender() {
   exUpdateControls();
-  const p=exId('exec-progress');p.replaceChildren();
+  const p = exId('exec-progress');
+  const journalOpen = $('execution-journal')?.open;
+  p.replaceChildren();
   renderAcceptanceResult();
   if(!exJob){p.textContent='Введите задачу, составьте план и нажмите «Согласовать план».';exId('exec-download').hidden=true;return}
   const stepProgress = 'Шаг ' + Math.min(exJob.index + 1, exJob.steps.length) + ' из ' + exJob.steps.length;
@@ -910,9 +923,13 @@ function exRender() {
   p.append(ol);
   const names=Object.keys(exJob.files);if(names.length){const files=document.createElement('details');const heading=document.createElement('summary');heading.textContent='Отдельные файлы ('+names.length+')';files.append(heading);const info=document.createElement('p');info.textContent='Основной результат можно скачать кнопкой ниже.';files.append(info);for(const name of names){const b=document.createElement('button');b.type='button';b.textContent='↓ '+(name === 'index.html' && exJob.htmlBundle ? 'Шаблон index.html' : name);b.style.cssText='display:block;margin:6px 0;max-width:100%;overflow-wrap:anywhere';b.addEventListener('click',()=>exDownloadFile(name));files.append(b)}p.append(files)}
   if(exJob.index===exJob.steps.length){const e=exValidate();if(e.length){const x=document.createElement('p');x.textContent='Требует проверки: '+e.join('; ');p.append(x)}}
-  const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
+  const journal = node('div', '', 'journal');
+  const details = node('details');
+  details.id = 'execution-journal';
+  details.open = !!journalOpen;
+  const summary = node('summary', 'Журнал');
+  const pre = node('pre');
   const checkLabels = {passed: 'пройдена по отчёту модели', not_run: 'не выполнена или не подтверждена'};
-  summary.textContent='Журнал';pre.style.whiteSpace='pre-wrap';
   pre.textContent = exJob.done.map((record, index) => [
     (index + 1) + '. ' + record.summary,
     'Проверка (' + (checkLabels[record.check_status] || 'прежняя запись без статуса') + '): ' + record.check,
@@ -921,7 +938,25 @@ function exRender() {
     record.open_items?.length && 'Открытые вопросы: ' + record.open_items.join(' · '),
     record.next_impulse && 'Далее: ' + record.next_impulse,
   ].filter(Boolean).join('\n')).join('\n\n');
-  details.append(summary,pre);p.append(details);
+  const copy = button('Копировать', async () => {
+    try {
+      await navigator.clipboard.writeText(pre.textContent);
+      copy.textContent = 'Скопировано';
+    } catch {
+      details.open = true;
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      copy.textContent = 'Текст выделен';
+    }
+  }, 'journal-copy');
+  copy.setAttribute('aria-label', 'Копировать журнал');
+  copy.disabled = !pre.textContent;
+  details.append(summary, pre);
+  journal.append(details, copy);
+  p.append(journal);
   const download = exId('exec-download');
   download.hidden = download.disabled = !names.length;
   download.textContent = exJob.format === 'html' && exJob.index < exJob.steps.length
@@ -934,6 +969,7 @@ async function exRun(){
   if(!key){exId('exec-status').textContent='API-ключ не найден в настройках.';return}
   exPause=false;exBusy=true;
   exId('exec-status').textContent = '';
+  exNotice('План выполняется');
   exRender();
   while(!exPause&&!exPlanChanged()&&exJob.index<exJob.steps.length){
     try{
@@ -949,7 +985,10 @@ async function exRun(){
       exRender();
     }catch(e){exPause=true;exId('exec-status').textContent='Остановлено на шаге '+(exJob.index+1)+': '+e.message}
   }
-  exBusy=false;exRender();
+  exBusy = false;
+  if (exJob.index < exJob.steps.length) exNotice('Остановлено', true);
+  else exNotice('');
+  exRender();
 }
 function exCrc(data){let c=-1;for(const b of data){c^=b;for(let i=0;i<8;i++)c=c&1?(c>>>1)^0xedb88320:c>>>1}return(c^-1)>>>0}
 function exZip(files){
@@ -980,6 +1019,7 @@ function exDownload(){
 exId('exec-start').addEventListener('click',()=>{
   if(exBusy||planning||(exJob&&!exPlanChanged()))return;
   if(!planReady()){
+    if (assembly.task.trim()) $('working-plan').open = true;
     exId('exec-status').textContent='Заполните задачу, результат и все поля плана.';return;
   }
   const model=exId('model').value;
@@ -996,6 +1036,7 @@ exId('exec-start').addEventListener('click',()=>{
   try { exSave(job); }
   catch(e) { exId('exec-status').textContent=e.message; return; }
   exJob = job;
+  exNotice('');
   exId('exec-status').textContent = restarting ? 'Выполнение обновлённого плана…'
     : 'План согласован. Нажмите «Выполнить план».';
   if (restarting) void exRun();

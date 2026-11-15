@@ -1,5 +1,5 @@
-const cacheName = 'interactive-engineering-18';
-const files = ['./', './index.html', './surf.css?v=6', './app.js?v=18', './modules/core.js', './modules/core.js?v=18',
+const cacheName = 'interactive-engineering-19';
+const files = ['./', './index.html', './surf.css?v=7', './app.js?v=19', './modules/core.js', './modules/core.js?v=18',
   './modules/execution-context.js?v=18', './modules/single-html.js?v=18', './modules/library.js', './modules/sync.js', './manifest.webmanifest', './icon.svg', './touch.png'];
 const urls = new Set(files.map(path => new URL(path, self.registration.scope).href));
 self.addEventListener('install', event => {
