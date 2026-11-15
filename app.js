@@ -618,9 +618,17 @@ function exRender() {
   exUpdateControls();
   const p=exId('exec-progress');p.replaceChildren();
   if(!exJob){p.textContent='Введите задачу, составьте план и нажмите «Согласовать план».';exId('exec-download').hidden=true;return}
-  const status=document.createElement('p');
-  status.textContent='Шаг '+Math.min(exJob.index+1,exJob.steps.length)+' из '+exJob.steps.length+(exBusy?' · выполняется':exJob.index===exJob.steps.length?' · завершено':' · пауза');
-  p.append(status);
+  const stepProgress = 'Шаг ' + Math.min(exJob.index + 1, exJob.steps.length) + ' из ' + exJob.steps.length;
+  const progress = node('p');
+  if (exBusy) {
+    progress.className = 'execution-progress';
+    const spinner = node('span', '', 'execution-spinner');
+    spinner.setAttribute('aria-hidden', 'true');
+    progress.append(spinner, node('span', 'План выполняется · ' + stepProgress));
+  } else {
+    progress.textContent = stepProgress + (exJob.index === exJob.steps.length ? ' · завершено' : ' · пауза');
+  }
+  p.append(progress);
   const ol=document.createElement('ol');
   exJob.steps.forEach((s,i)=>{const li=document.createElement('li');li.textContent=(i<exJob.index?'✓ ':i===exJob.index?'▶ ':'○ ')+s.title;ol.append(li)});
   p.append(ol);

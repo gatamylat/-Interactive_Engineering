@@ -111,6 +111,20 @@ textarea::placeholder, input::placeholder { color: var(--placeholder); }
 .model-label select { width: auto; margin: 0; }
 .planner-actions { justify-content: space-between; }
 p, small { color: var(--muted); overflow-wrap: anywhere; }
+.execution-progress { display: flex; align-items: center; gap: 8px; }
+.execution-spinner {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--control-line);
+  border-top-color: var(--accent-ink);
+  border-radius: 50%;
+  animation: execution-spin 800ms linear infinite;
+}
+@keyframes execution-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .execution-spinner { animation: none; }
+}
 [role="status"]:empty { display: none; }
 #selected, #steps, .item-list { display: grid; gap: 8px; }
 .step, .item, .selected-item { border-top: 1px solid var(--line); padding-top: 8px; overflow-wrap: anywhere; min-width: 0; }
