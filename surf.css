@@ -97,14 +97,7 @@ main { padding-top: 20px; }
 .workspace-card > * + *, dialog section > * + *, #entry-form > * + * { margin-top: 10px; }
 button, select, input, textarea, summary, .upload { font: inherit; color: inherit; }
 button, .upload, summary { min-height: 42px; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer; font-weight: 500; }
-button:where(:not(.primary, .icon-button, .dialog-dismiss)), .upload {
-  background: var(--wash);
-  border-color: var(--line);
-}
-button:where(:not(.primary, .dialog-dismiss)):enabled:hover, summary:hover, .upload:hover {
-  background: var(--wash);
-  border-color: var(--control-line);
-}
+button:hover, summary:hover, .upload:hover { background: var(--wash); }
 button:disabled { opacity: .55; cursor: default; }
 button.primary { background: var(--accent-button); color: var(--on-accent); font-weight: 600; }
 .icon-button { width: 44px; display: grid; place-items: center; flex: none; padding: 0; }
