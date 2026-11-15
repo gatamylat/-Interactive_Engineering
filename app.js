@@ -109,13 +109,18 @@ function renderSelected() {
 }
 
 function stepField(step, key, label, limit, multiline) {
-  const wrapper = node('label', label);
+  const wrapper = node('label');
+  const caption = node('span', label, 'required-caption');
+  const mark = node('span', '*', 'required-mark');
+  mark.setAttribute('aria-hidden', 'true');
+  caption.append(mark);
   const input = node(multiline ? 'textarea' : 'input');
+  input.setAttribute('aria-required', 'true');
   if (multiline) input.rows = 2;
   input.maxLength = limit;
   input.value = step[key];
   input.addEventListener('input', () => { step[key] = input.value; persistDraft(); });
-  wrapper.append(input);
+  wrapper.append(caption, input);
   return wrapper;
 }
 
@@ -160,7 +165,10 @@ function renderSteps() {
     }
     list.append(card);
   });
-  $('add-step').disabled = assembly.steps.length >= 12;
+  const atLimit = assembly.steps.length >= 12;
+  $('add-step').disabled = atLimit;
+  $('add-step-bottom').disabled = atLimit;
+  $('add-step-bottom').hidden = assembly.steps.length === 0;
 }
 
 function renderAssembly() {
@@ -204,13 +212,15 @@ for (const [input, key] of [['task', 'task'], ['result', 'result']]) {
 }
 $('model').value = get('model') === 'deepseek' ? 'deepseek' : 'claude';
 $('model').addEventListener('change', () => { set('model', $('model').value); updatePackage(); });
-$('add-step').addEventListener('click', () => {
+function addStep() {
   if (assembly.steps.length >= 12) return;
   assembly.steps.push(blankStep());
   persistDraft();
   renderSteps();
   $('steps').lastElementChild.querySelector('input').focus();
-});
+}
+$('add-step').addEventListener('click', addStep);
+$('add-step-bottom').addEventListener('click', addStep);
 
 $('assembly').addEventListener('submit', async event => {
   event.preventDefault();
@@ -597,24 +607,24 @@ function exUpdateControls(ready = planReady()) {
   const start = exId('exec-start');
   start.hidden = !!exJob && (!changed || exBusy);
   start.disabled = planning || (changed && !ready);
-  start.textContent = exJob ? 'Запустить повторно' : 'Начать выполнение плана';
+  start.textContent = exJob ? 'Запустить повторно' : 'Согласовать план';
   const run = exId('exec-run');
   run.hidden = !exBusy && (!exJob || changed || exJob.index >= exJob.steps.length);
-  run.textContent = exBusy ? 'Пауза после шага' : 'Продолжить выполнение';
+  run.textContent = exBusy ? 'Пауза после шага' : 'Выполнить план';
   exId('exec-plan-changed').hidden = !changed;
 }
 
 function exRender() {
   exUpdateControls();
   const p=exId('exec-progress');p.replaceChildren();
-  if(!exJob){p.textContent='Введите задачу, составьте план и нажмите «Начать выполнение плана».';exId('exec-download').hidden=true;return}
+  if(!exJob){p.textContent='Введите задачу, составьте план и нажмите «Согласовать план».';exId('exec-download').hidden=true;return}
   const status=document.createElement('p');
   status.textContent='Шаг '+Math.min(exJob.index+1,exJob.steps.length)+' из '+exJob.steps.length+(exBusy?' · выполняется':exJob.index===exJob.steps.length?' · завершено':' · пауза');
   p.append(status);
   const ol=document.createElement('ol');
   exJob.steps.forEach((s,i)=>{const li=document.createElement('li');li.textContent=(i<exJob.index?'✓ ':i===exJob.index?'▶ ':'○ ')+s.title;ol.append(li)});
   p.append(ol);
-  const names=Object.keys(exJob.files);if(names.length){const files=document.createElement('details');const heading=document.createElement('summary');heading.textContent='Отдельные файлы ('+names.length+')';files.append(heading);const info=document.createElement('p');info.textContent='Обычно достаточно кнопки «Скачать файлы» выше.';files.append(info);for(const name of names){const b=document.createElement('button');b.type='button';b.textContent='↓ '+name;b.style.cssText='display:block;margin:6px 0;max-width:100%;overflow-wrap:anywhere';b.addEventListener('click',()=>exDownloadFile(name));files.append(b)}p.append(files)}
+  const names=Object.keys(exJob.files);if(names.length){const files=document.createElement('details');const heading=document.createElement('summary');heading.textContent='Отдельные файлы ('+names.length+')';files.append(heading);const info=document.createElement('p');info.textContent='Обычно достаточно кнопки «Скачать файлы» ниже.';files.append(info);for(const name of names){const b=document.createElement('button');b.type='button';b.textContent='↓ '+name;b.style.cssText='display:block;margin:6px 0;max-width:100%;overflow-wrap:anywhere';b.addEventListener('click',()=>exDownloadFile(name));files.append(b)}p.append(files)}
   if(exJob.index===exJob.steps.length){const e=exValidate();if(e.length){const x=document.createElement('p');x.textContent='Требует проверки: '+e.join('; ');p.append(x)}}
   const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
   const checkLabels = {passed: 'пройдена по отчёту модели', not_run: 'не выполнена или не подтверждена'};
@@ -701,7 +711,7 @@ exId('exec-start').addEventListener('click',()=>{
   catch(e) { exId('exec-status').textContent=e.message; return; }
   exJob = job;
   exId('exec-status').textContent = restarting ? 'Выполнение обновлённого плана…'
-    : 'План зафиксирован. Нажмите «Продолжить выполнение».';
+    : 'План согласован. Нажмите «Выполнить план».';
   if (restarting) void exRun();
   else exRender();
 });
@@ -709,5 +719,6 @@ exId('exec-run').addEventListener('click',exRun);
 exId('exec-download').addEventListener('click',exDownload);
 exId('exec-save').addEventListener('click',exArchive);
 exId('exec-reset').addEventListener('click',exReset);
+exId('exec-reset-top').addEventListener('click',exReset);
 exId('exec-restore').addEventListener('click',exRestore);
 exRender();
