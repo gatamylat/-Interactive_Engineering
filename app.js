@@ -629,15 +629,73 @@ try {
 /* Autonomous execution: each request receives the goal, plan, step materials and current files. */
 const exArchiveStore = 'interactive-engineering:executor-projects-v1';
 const exArchives=()=>{try{return JSON.parse(localStorage.getItem(exArchiveStore)||'[]')}catch{return []}};
-function exArchive(){if(!exJob)return false;const items=exArchives();const name=prompt('Название проекта для сохранения:',exJob.task.slice(0,75));if(!name)return false;items.unshift({id:crypto.randomUUID(),name,created:new Date().toISOString(),job:structuredClone(exJob),assembly:structuredClone(assembly)});localStorage.setItem(exArchiveStore,JSON.stringify(items));exId('exec-status').textContent='Проект сохранён в архиве этого устройства.';exRender();return true}
-function exReset(){
-  if(exBusy){exId('exec-status').textContent='Сначала приостановите выполнение.';return}
-  if(!confirm('Создать полностью новый проект? Будут очищены задача, план, выбранные кирпичики и текущее выполнение. Библиотека и сохранённые проекты останутся.'))return;
-  exNotice('');
-  exJob=null;localStorage.removeItem(exStore);assembly=blankAssembly();recipeId=undefined;recipeRev=undefined;reasons={};
-  persistDraft();renderAssembly();exId('exec-status').textContent='Новый проект готов. Введите задачу и составьте план.';status('plan-status','');status('package-status','');exRender();$('task').focus();
+function exArchive() {
+  if (!exJob) {
+    status('project-status', 'Сначала согласуйте план.');
+    return;
+  }
+  const items = exArchives();
+  const name = prompt('Название проекта для сохранения:', exJob.task.slice(0, 75));
+  if (!name) return;
+  items.unshift({id: crypto.randomUUID(), name, created: new Date().toISOString(),
+    job: structuredClone(exJob), assembly: structuredClone(assembly)});
+  localStorage.setItem(exArchiveStore, JSON.stringify(items));
+  status('project-status', 'Проект сохранён в архиве этого устройства.');
+  exRender();
 }
-function exRestore(){if(exBusy)return;const items=exArchives();if(!items.length){exId('exec-status').textContent='Сохранённых проектов пока нет.';return}const list=items.map((x,i)=>(i+1)+'. '+x.name+' · '+new Date(x.created).toLocaleDateString('ru-RU')+' · шаг '+(x.job.index+1)).join('\n');const answer=prompt('Введите номер проекта:\n'+list);if(!answer)return;const i=Number(answer)-1;if(!Number.isInteger(i)||!items[i])return;exNotice('');exJob=structuredClone(items[i].job);assembly=structuredClone(items[i].assembly);exId('exec-format').value=exJob.format;persistDraft();renderAssembly();exSave();exId('exec-status').textContent='Проект восстановлен: '+items[i].name;exRender()}
+
+function exReset(event) {
+  if (exBusy) {
+    const statusId = event.currentTarget.id === 'exec-reset' ? 'project-status' : 'exec-status';
+    status(statusId, 'Сначала приостановите выполнение.');
+    return;
+  }
+  if (!confirm('Создать полностью новый проект? Будут очищены задача, план, выбранные кирпичики и текущее выполнение. Библиотека и сохранённые проекты останутся.')) return;
+  exNotice('');
+  exJob = null;
+  localStorage.removeItem(exStore);
+  assembly = blankAssembly();
+  recipeId = undefined;
+  recipeRev = undefined;
+  reasons = {};
+  status('project-status', '');
+  persistDraft();
+  renderAssembly();
+  status('exec-status', 'Новый проект готов. Введите задачу и составьте план.');
+  status('plan-status', '');
+  status('package-status', '');
+  exRender();
+  $('task').focus();
+}
+
+function exRestore() {
+  if (exBusy) {
+    status('project-status', 'Сначала приостановите выполнение.');
+    return;
+  }
+  const items = exArchives();
+  if (!items.length) {
+    status('project-status', 'Сохранённых проектов пока нет.');
+    return;
+  }
+  const list = items.map((item, index) => (index + 1) + '. ' + item.name + ' · ' +
+    new Date(item.created).toLocaleDateString('ru-RU') + ' · шаг ' + (item.job.index + 1)).join('\n');
+  const answer = prompt('Введите номер проекта:\n' + list);
+  if (!answer) return;
+  const index = Number(answer) - 1;
+  if (!Number.isInteger(index) || !items[index]) return;
+  const saved = items[index];
+  exNotice('');
+  exJob = structuredClone(saved.job);
+  assembly = structuredClone(saved.assembly);
+  exId('exec-format').value = exJob.format;
+  persistDraft();
+  renderAssembly();
+  exSave();
+  status('exec-status', '');
+  status('project-status', 'Проект восстановлен: ' + saved.name);
+  exRender();
+}
 
 function exNotice(text, temporary = false) {
   clearTimeout(exNoticeTimer);
@@ -1003,8 +1061,13 @@ function exRender() {
   p.append(journal);
   const download = exId('exec-download');
   download.hidden = download.disabled = !names.length;
-  download.textContent = exJob.format === 'html' && exJob.index < exJob.steps.length
-    ? 'Скачать черновик' : 'Скачать файлы';
+  // Successful acceptance repairs add journal entries beyond the completed plan.
+  if (exJob.index === exJob.steps.length && exJob.done.length > exJob.steps.length) {
+    download.textContent = 'Скачать исправленные файлы';
+  } else {
+    download.textContent = exJob.format === 'html' && exJob.index < exJob.steps.length
+      ? 'Скачать черновик' : 'Скачать файлы';
+  }
 }
 async function exRun(){
   if(exBusy){exPause=true;return}
