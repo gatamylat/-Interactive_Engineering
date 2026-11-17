@@ -1,8 +1,8 @@
 import {acceptanceLimit, askModel, blankAssembly, blankStep, buildPackage, candidates, kinds, managerPrompt, models,
-  readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=21';
+  missingResultFiles, planFormatError, readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=22';
 import {change, edit, entries, read} from './modules/library.js';
 import {cloudIdentity, connectSync} from './modules/sync.js';
-import {executionContext, executionRecord, patchRecoverySource, readExecutionContext} from './modules/execution-context.js?v=21';
+import {executionContext, executionRecord, patchRecoverySource, readExecutionContext} from './modules/execution-context.js?v=22';
 import {buildSingleHtml} from './modules/single-html.js?v=20';
 
 const $ = id => document.getElementById(id);
@@ -73,6 +73,8 @@ function loadDraft() {
   recipeId = draft?.recipeId;
   recipeRev = draft?.recipeRev;
   reasons = draft?.reasons ?? {};
+  const format = assembly.planFormat || exJob?.format;
+  if (format) $('exec-format').value = format;
   renderAssembly();
 }
 
@@ -254,7 +256,11 @@ async function save(update) {
 }
 
 for (const [input, key] of [['task', 'task'], ['result', 'result']]) {
-  $(input).addEventListener('input', () => { assembly[key] = $(input).value; persistDraft(); });
+  $(input).addEventListener('input', () => {
+    assembly[key] = $(input).value;
+    if (key === 'result') assembly.autoResult = false;
+    persistDraft();
+  });
 }
 function updateModelOptions() {
   const select = $('model');
@@ -271,6 +277,7 @@ function updateModelOptions() {
 
 updateModelOptions();
 $('model').addEventListener('change', () => { set('model', $('model').value); updatePackage(); });
+$('exec-format').addEventListener('change', updatePackage);
 function addStep() {
   if (assembly.steps.length >= 12) return;
   assembly.steps.push(blankStep());
@@ -293,19 +300,28 @@ $('assembly').addEventListener('submit', async event => {
   if (assembly.steps.length && !confirm('Заменить текущие шаги новым планом?')) return;
   const current = profile;
   const original = JSON.stringify(assembly);
-  const available = candidates([assembly.task, assembly.result].join(' '), materials(), assembly.ids);
-  const prompt = managerPrompt(assembly, available, $('exec-format').value);
+  const format = $('exec-format').value;
+  const keepResult = !!assembly.result.trim() && !(assembly.autoResult && assembly.planFormat !== format);
+  const request = {...assembly, result: keepResult ? assembly.result : ''};
+  const available = candidates([request.task, request.result].join(' '), materials(), request.ids);
+  const prompt = managerPrompt(request, available, format);
   planning = true;
   updatePackage();
   status('plan-status', models[chosenModel] + ' составляет план…');
   try {
     const reply = await askModel(chosenModel, key, [{role: 'user', content: prompt}]);
-    if (profile !== current || JSON.stringify(assembly) !== original) {
+    if (profile !== current || JSON.stringify(assembly) !== original || $('exec-format').value !== format) {
       status('plan-status', 'Сборка изменилась во время запроса. Составьте план для текущей задачи.');
       return;
     }
-    const proposed = readPlan(reply, available);
-    assembly.result ||= proposed.result;
+    const proposed = readPlan(reply, available, format);
+    const result = keepResult ? assembly.result : proposed.result;
+    const error = planFormatError({...proposed, result}, format);
+    if (error) throw new Error(error);
+    assembly.result = result;
+    if (!keepResult) assembly.autoResult = true;
+    assembly.planFormat = proposed.planFormat;
+    assembly.deliverables = proposed.deliverables;
     assembly.steps = proposed.steps;
     assembly.acceptance = proposed.acceptance;
     $('acceptance-plan').open = proposed.acceptance.length > 0;
@@ -414,6 +430,7 @@ function renderLibrary() {
 function loadRecipe(item) {
   if ((assembly.task || assembly.steps.length || assembly.ids.length) && !confirm('Открыть сохранённую сборку вместо текущего черновика?')) return;
   assembly = structuredClone(item.assembly);
+  if (assembly.planFormat) $('exec-format').value = assembly.planFormat;
   recipeId = item.id;
   recipeRev = state.library[item.id].rev;
   reasons = item.reasons ?? {};
@@ -611,7 +628,6 @@ try {
 
 /* Autonomous execution: each request receives the goal, plan, step materials and current files. */
 const exArchiveStore = 'interactive-engineering:executor-projects-v1';
-if (exJob) exId('exec-format').value = exJob.format;
 const exArchives=()=>{try{return JSON.parse(localStorage.getItem(exArchiveStore)||'[]')}catch{return []}};
 function exArchive(){if(!exJob)return false;const items=exArchives();const name=prompt('Название проекта для сохранения:',exJob.task.slice(0,75));if(!name)return false;items.unshift({id:crypto.randomUUID(),name,created:new Date().toISOString(),job:structuredClone(exJob),assembly:structuredClone(assembly)});localStorage.setItem(exArchiveStore,JSON.stringify(items));exId('exec-status').textContent='Проект сохранён в архиве этого устройства.';exRender();return true}
 function exReset(){
@@ -621,7 +637,7 @@ function exReset(){
   exJob=null;localStorage.removeItem(exStore);assembly=blankAssembly();recipeId=undefined;recipeRev=undefined;reasons={};
   persistDraft();renderAssembly();exId('exec-status').textContent='Новый проект готов. Введите задачу и составьте план.';status('plan-status','');status('package-status','');exRender();$('task').focus();
 }
-function exRestore(){if(exBusy)return;const items=exArchives();if(!items.length){exId('exec-status').textContent='Сохранённых проектов пока нет.';return}const list=items.map((x,i)=>(i+1)+'. '+x.name+' · '+new Date(x.created).toLocaleDateString('ru-RU')+' · шаг '+(x.job.index+1)).join('\n');const answer=prompt('Введите номер проекта:\n'+list);if(!answer)return;const i=Number(answer)-1;if(!Number.isInteger(i)||!items[i])return;exNotice('');exJob=structuredClone(items[i].job);assembly=structuredClone(items[i].assembly);persistDraft();renderAssembly();exSave();exId('exec-format').value=exJob.format;exId('exec-status').textContent='Проект восстановлен: '+items[i].name;exRender()}
+function exRestore(){if(exBusy)return;const items=exArchives();if(!items.length){exId('exec-status').textContent='Сохранённых проектов пока нет.';return}const list=items.map((x,i)=>(i+1)+'. '+x.name+' · '+new Date(x.created).toLocaleDateString('ru-RU')+' · шаг '+(x.job.index+1)).join('\n');const answer=prompt('Введите номер проекта:\n'+list);if(!answer)return;const i=Number(answer)-1;if(!Number.isInteger(i)||!items[i])return;exNotice('');exJob=structuredClone(items[i].job);assembly=structuredClone(items[i].assembly);exId('exec-format').value=exJob.format;persistDraft();renderAssembly();exSave();exId('exec-status').textContent='Проект восстановлен: '+items[i].name;exRender()}
 
 function exNotice(text, temporary = false) {
   clearTimeout(exNoticeTimer);
@@ -683,10 +699,13 @@ function exApplyResponse(job, reply) {
     throw Error('Модель не передала изменений файлов. Этот шаг не засчитан.');
   }
   const htmlBundle = bundling ? reply.bundle : job.htmlBundle;
-  if (job.format === 'html') {
-    if (bundling || htmlBundle || (job.singleHtmlAssembly && job.index + 1 === job.steps.length)) {
-      buildSingleHtml(staged, htmlBundle);
-    }
+  const finalStep = job.index + 1 === job.steps.length;
+  if (job.format === 'html' && (bundling || htmlBundle) && !finalStep) {
+    buildSingleHtml(staged, htmlBundle);
+  }
+  if (finalStep) {
+    const errors = exValidate({...job, index: job.index + 1, files: staged, htmlBundle});
+    if (errors.length) throw Error('Итоговый комплект для выбранного режима не готов. ' + errors.join('. '));
   }
   return {files: staged, htmlBundle};
 }
@@ -694,6 +713,9 @@ function exApplyResponse(job, reply) {
 function exOutputFiles(job) {
   if (job.format === 'html' && (job.htmlBundle || (job.singleHtmlAssembly && job.index === job.steps.length))) {
     return {'index.html': buildSingleHtml(job.files, job.htmlBundle)};
+  }
+  if (job.format === 'document' && job.deliverables && job.index === job.steps.length && typeof job.files['result.md'] === 'string') {
+    return {'result.md': job.files['result.md']};
   }
   return job.files;
 }
@@ -735,39 +757,55 @@ async function exAskStep(job, key) {
       {role: 'user', content: JSON.stringify({excerpts})});
   }
 }
-function exValidate() {
-  const f=exJob.files,errors=[];
-  if(exJob.format==='pwa') {
-    for(const n of ['index.html','sw.js','manifest.webmanifest'])if(!f[n] && !(n==='manifest.webmanifest'&&f['manifest.json']))errors.push('Нет '+n);
-    if(f['manifest.webmanifest']||f['manifest.json'])try {JSON.parse(f['manifest.webmanifest']||f['manifest.json'])}catch{errors.push('Некорректный manifest')}
-    if(f['index.html']&&!f['index.html'].includes('serviceWorker'))errors.push('Нет регистрации service worker');
+function exValidate(job = exJob) {
+  let outputs;
+  try { outputs = exOutputFiles(job); }
+  catch (error) { return [error.message]; }
+  const names = Object.keys(outputs).filter(name => typeof outputs[name] === 'string' && outputs[name].trim());
+  const missing = missingResultFiles(job.format, names);
+  for (const name of job.deliverables || []) {
+    if (!names.includes(name) && !missing.includes(name)) missing.push(name);
   }
-  if (exJob.format === 'html') {
-    try {
-      if (!exOutputFiles(exJob)['index.html']?.trim()) errors.push('Нет index.html');
-    } catch (error) { errors.push(error.message); }
+  const errors = missing.map(name => 'Нет ' + name);
+  if (job.format === 'pwa') {
+    const manifest = names.find(name => name === 'manifest.webmanifest' || name === 'manifest.json');
+    if (manifest) {
+      try {
+        const value = JSON.parse(outputs[manifest]);
+        if (!value || Array.isArray(value) || typeof value !== 'object') throw Error();
+      } catch { errors.push('Некорректный манифест ' + manifest); }
+    }
+    const entry = outputs['index.html'];
+    if (entry && ![entry, ...names.filter(name => /\.m?js$/i.test(name) && name !== 'sw.js').map(name => outputs[name])]
+      .some(code => /\bserviceWorker\s*(?:\?\.|\.)\s*register\s*\(/.test(code))) {
+      errors.push('Нет регистрации service worker в HTML или JS');
+    }
   }
-  if(exJob.format==='document'&&!f['result.md'])errors.push('Нет result.md');
   return errors;
 }
 function exPlanChanged() {
   if (!exJob) return false;
   const planFields = steps => steps.map(({title, action, result, check, ids}) =>
     [title, action, result, check, ids]);
-  return exJob.task !== assembly.task || exJob.result !== assembly.result
+  return exJob.format !== exId('exec-format').value || exJob.task !== assembly.task || exJob.result !== assembly.result
+    || JSON.stringify(exJob.deliverables || []) !== JSON.stringify(assembly.deliverables || [])
     || JSON.stringify(exJob.globalIds) !== JSON.stringify(assembly.ids)
     || JSON.stringify(planFields(exJob.steps)) !== JSON.stringify(planFields(assembly.steps))
     || JSON.stringify(exJob.acceptance || []) !== JSON.stringify(acceptanceCases());
 }
 
 function exUpdateControls(ready = planReady()) {
+  const format = exId('exec-format');
+  format.disabled = planning || exBusy;
+  const formatError = assembly.steps.length ? planFormatError(assembly, format.value) : '';
+  status('plan-format-status', formatError);
   const changed = exPlanChanged();
   const start = exId('exec-start');
   start.hidden = !!exJob && (!changed || exBusy);
-  start.disabled = planning || (changed && !ready);
+  start.disabled = planning || !!formatError || (changed && !ready);
   start.textContent = exJob ? 'Запустить повторно' : 'Согласовать план';
   const run = exId('exec-run');
-  run.hidden = exFixing || (!exBusy && (!exJob || changed || exJob.index >= exJob.steps.length));
+  run.hidden = exFixing || (!exBusy && (!exJob || changed || !!formatError || exJob.index >= exJob.steps.length));
   run.textContent = exBusy ? 'Пауза после шага' : 'Выполнить план';
   exId('exec-plan-changed').hidden = !changed;
 }
@@ -971,6 +1009,7 @@ function exRender() {
 async function exRun(){
   if(exBusy){exPause=true;return}
   if(!exJob||exJob.index>=exJob.steps.length||exPlanChanged())return;
+  if (planFormatError(assembly, exJob.format)) return;
   const key=get('key-'+exJob.model);
   if(!key){exId('exec-status').textContent='API-ключ не найден в настройках.';return}
   exPause=false;exBusy=true;
@@ -1028,6 +1067,9 @@ exId('exec-start').addEventListener('click',()=>{
     if (assembly.task.trim()) $('working-plan').open = true;
     exId('exec-status').textContent='Заполните задачу, результат и все поля плана.';return;
   }
+  const format = exId('exec-format').value;
+  const formatError = planFormatError(assembly, format);
+  if (formatError) { status('exec-status', formatError); return; }
   const model=exId('model').value;
   if(!get('key-'+model)){exId('exec-status').textContent='Сначала добавьте ключ модели в настройках.';return}
   const restarting = !!exJob;
@@ -1036,12 +1078,16 @@ exId('exec-start').addEventListener('click',()=>{
   const materialIds = new Set([...assembly.ids, ...assembly.steps.flatMap(step => step.ids)]);
   const job={task:assembly.task,result:assembly.result,steps:structuredClone(assembly.steps),globalIds:[...assembly.ids],
     acceptance: acceptanceCases(),
-    materials:structuredClone(materials().filter(item => materialIds.has(item.id))),model,format:exId('exec-format').value,index:0,done:[],files:{}};
+    materials:structuredClone(materials().filter(item => materialIds.has(item.id))),model,format,deliverables:assembly.deliverables,index:0,done:[],files:{}};
   if (job.format === 'html') job.singleHtmlAssembly = true;
   if(job.format==='pwa'){for(const m of job.materials){const name=(m.source||m.title||'').split('/').pop();if(['index.html','sw.js','manifest.json','manifest.webmanifest','README.md'].includes(name)&&m.text)job.files[name]=m.text}}
   try { exSave(job); }
   catch(e) { exId('exec-status').textContent=e.message; return; }
   exJob = job;
+  if (!assembly.planFormat) {
+    assembly.planFormat = format;
+    persistDraft();
+  }
   exNotice('');
   exId('exec-status').textContent = restarting ? 'Выполнение обновлённого плана…'
     : 'План согласован. Нажмите «Выполнить план».';

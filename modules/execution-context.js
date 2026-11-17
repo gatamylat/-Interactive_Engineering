@@ -64,7 +64,8 @@ export function executionContext(job) {
       instructions: 'Для небольшой задачи создай самодостаточный index.html. Для модулей используй комментарии с точным именем файла, например <!-- INLINE: route.js -->, либо обычные локальные подключения script src и link rel=stylesheet. Ставь их в порядке зависимостей. Конструктор сам встроит сохранённый код. Если старый шаблон использует именные маркеры, можно передать bundle: [{"file":"route.js","marker":"ROUTE_JS"}]. Для вставки в обычный script используй JS без import/export. На финальном шаге, если исходники готовы, верни summary, check, check_status и no_changes_needed:true. Не переписывай HTML ради сборки. Проверка относится к итоговому index.html.',
       current: job.htmlBundle
     } : undefined,
-    goal: job.task, expectedResult: job.result, format: job.format, stepNumber: job.index + 1,
+    pwaOutput: job.format === 'pwa' ? 'Итог — комплект PWA: index.html, манифест и sw.js. Подключай локальные файлы обычными тегами script/link и зарегистрируй service worker. Сборка по INLINE-маркерам относится только к режиму одного HTML.' : undefined,
+    goal: job.task, expectedResult: job.result, format: job.format, deliverables: job.deliverables, stepNumber: job.index + 1,
     plan: job.steps.map(({title, action, result, check}, index) =>
       index < job.index ? {title, action, result, check} : {title, result, check}),
     step,
