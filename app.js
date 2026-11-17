@@ -1,8 +1,8 @@
 import {acceptanceLimit, askModel, blankAssembly, blankStep, buildPackage, candidates, kinds, managerPrompt, models,
-  readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=20';
+  readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=21';
 import {change, edit, entries, read} from './modules/library.js';
 import {cloudIdentity, connectSync} from './modules/sync.js';
-import {executionContext, executionRecord, readExecutionContext} from './modules/execution-context.js?v=20';
+import {executionContext, executionRecord, patchRecoverySource, readExecutionContext} from './modules/execution-context.js?v=21';
 import {buildSingleHtml} from './modules/single-html.js?v=20';
 
 const $ = id => document.getElementById(id);
@@ -634,6 +634,13 @@ function exParse(raw) {
   const s = raw.replace(/^\s*\x60\x60\x60(?:json)?/i, '').replace(/\x60\x60\x60\s*$/, '').trim();
   try { return JSON.parse(s); } catch { const a=s.indexOf('{'), b=s.lastIndexOf('}'); return JSON.parse(s.slice(a,b+1)); }
 }
+class PatchConflict extends Error {
+  constructor(file, find, reason) {
+    super(file + ': ' + reason + '. Предыдущие шаги сохранены.');
+    this.file = file;
+    this.find = find;
+  }
+}
 function exApplyResponse(job, reply) {
   if (typeof reply?.summary !== 'string' || typeof reply.check !== 'string') {
     throw Error('В ответе нужны текстовые поля summary и check.');
@@ -656,13 +663,11 @@ function exApplyResponse(job, reply) {
       || typeof patch.replace !== 'string') throw Error('Некорректная точечная правка.');
     const {name, find, replace} = patch;
     const base = Object.hasOwn(staged, name) ? staged[name] : undefined;
-    if (typeof base !== 'string') throw Error('Нет файла для правки: ' + name);
+    if (typeof base !== 'string') throw new PatchConflict(name, find, 'нет файла для правки');
     const pos = base.indexOf(find);
     const next = pos < 0 ? -1 : base.indexOf(find, pos + 1);
     if (pos < 0 || next >= 0) {
-      const reason = pos < 0 ? 'фрагмент отсутствует' : 'несколько совпадений около позиций ' + pos + ' и ' + next;
-      throw Error(name + ': ' + reason + '. Начало find: ' + JSON.stringify(find.slice(0, 180))
-        + '. Прочитайте актуальный фрагмент и используйте точное уникальное совпадение.');
+      throw new PatchConflict(name, find, pos < 0 ? 'фрагмент отсутствует' : 'фрагмент встречается несколько раз');
     }
     staged[name] = base.slice(0, pos) + replace + base.slice(pos + find.length);
   }
@@ -708,16 +713,24 @@ async function exAskStep(job, key) {
     } catch (error) {
       if (repairing || exPause || (!exFixing && exPlanChanged())) throw error;
       repairing = true;
+      const conflict = error instanceof PatchConflict;
+      const correction = conflict ? JSON.stringify({
+        error: error.message,
+        rejectedFind: error.find.slice(0, 360),
+        source: patchRecoverySource(job, error.file, error.find),
+        instruction: 'Предыдущий ответ целиком отклонён. Начни с сохранённой версии файла в source. Выбери другое точное уникальное место из актуального кода и скопируй его с пробелами и переносами строк. Для вставки используй короткий уникальный якорь. Если нужное место не видно, запроси read, затем верни полный набор изменений текущего шага.',
+      }) : 'Исправьте ответ: ' + error.message
+          + ' Файлы предыдущей попытки не применены. Верните весь результат текущего шага в указанном формате.';
       messages.push({role: 'assistant', content: 'Предыдущая попытка оформить результат шага отклонена.'},
-        {role: 'user', content: 'Исправьте ответ: ' + error.message
-          + ' Файлы предыдущей попытки не применены. Верните весь результат текущего шага в указанном формате.'});
+        {role: 'user', content: correction});
       continue;
     }
-    const excerpts = JSON.stringify(readExecutionContext(job, value.read));
-    if (seen.size === 4 || seen.has(excerpts)) {
+    const excerpts = readExecutionContext(job, value.read);
+    const signature = JSON.stringify(excerpts);
+    if (seen.size === 4 || seen.has(signature)) {
       throw Error('Модель не завершила шаг после чтения фрагментов. Уточните в плане, какой участок нужен, или повторите шаг.');
     }
-    seen.add(excerpts);
+    seen.add(signature);
     messages.push({role: 'assistant', content: JSON.stringify({read: value.read})},
       {role: 'user', content: JSON.stringify({excerpts})});
   }

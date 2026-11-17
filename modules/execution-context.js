@@ -100,6 +100,45 @@ export function readExecutionContext(job, requests) {
   });
 }
 
+export function patchRecoverySource(job, name, find) {
+  const text = Object.hasOwn(job.files, name) ? job.files[name] : undefined;
+  if (typeof text !== 'string') return {name, note: 'Файла нет в сохранённом состоянии перед шагом.'};
+  const result = {name, length: text.length};
+  if (text.length <= 12_000) return {...result, text};
+
+  const lines = find.split(/\r?\n/).map(line => line.trim())
+    .filter(line => line.length >= 12).sort((a, b) => b.length - a.length);
+  const exact = text.indexOf(find);
+  if (exact !== -1) {
+    const positions = [exact, text.indexOf(find, exact + 1)].filter(position => position !== -1);
+    return {...result, excerpts: positions.map(position => {
+      const from = Math.max(0, position - 480);
+      return {from, text: text.slice(from, from + readSize)};
+    })};
+  }
+
+  const action = job.steps[job.index].action;
+  const tag = action.includes('<style>') ? 'style' : action.includes('<script>') ? 'script' : '';
+  if (tag && /\.html?$/i.test(name)) {
+    const matches = [...text.matchAll(new RegExp('<' + tag + '>([\\s\\S]*?)</' + tag + '\\s*>', 'gi'))];
+    if (matches.length === 1 && matches[0][0].length <= 12_000) {
+      const [block] = matches[0];
+      return {...result, excerpts: [{from: matches[0].index, text: block}]};
+    }
+  }
+
+  for (const line of lines) {
+    const position = text.indexOf(line);
+    if (position >= 0 && text.indexOf(line, position + line.length) === -1) {
+      const from = Math.max(0, position - 600);
+      return {...result, excerpts: [{from, text: text.slice(from, from + readSize)}]};
+    }
+  }
+  const terms = new Set(words(action + ' ' + find).map(word => word.slice(0, 5)));
+  return {...result, ...excerpt(text, part => [...new Set(words(part).map(word => word.slice(0, 5)))]
+    .filter(word => terms.has(word)).length, excerptSize * 3)};
+}
+
 export function executionRecord(reply, previousFiles, files) {
   const clean = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
   const list = value => Array.isArray(value) ? value.slice(0, 8).map(item => clean(item, 450)).filter(Boolean) : [];
