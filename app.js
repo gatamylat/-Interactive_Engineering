@@ -43,6 +43,7 @@ function button(label, action, className) {
 }
 
 const materials = () => state ? entries(state).filter(item => item.kind !== 'recipe') : [];
+const selectedIds = () => [...new Set([...assembly.ids, ...assembly.steps.flatMap(step => step.ids)])];
 const byTitle = (a, b) => a.title.localeCompare(b.title, 'ru');
 const itemById = id => state?.library[id]?.entry;
 
@@ -52,6 +53,9 @@ function planReady() {
 }
 
 function updatePackage() {
+  const stepCount = assembly.steps.length;
+  status('selected-count', stepCount ? '(' + selectedIds().length + ')' : '');
+  status('step-count', stepCount ? '(' + stepCount + ')' : '');
   const ready = planReady();
   if ($('package').closest('details').open) $('package').value = ready ? buildPackage(assembly, materials()) : '';
   $('copy').disabled = !ready;
@@ -91,7 +95,7 @@ function toggleId(ids, id, checked) {
 function renderSelected() {
   const list = $('selected');
   list.replaceChildren();
-  const ids = [...new Set([...assembly.ids, ...assembly.steps.flatMap(step => step.ids)])];
+  const ids = selectedIds();
   if (!ids.length) list.append(node('p', 'Добавьте материалы вручную или попросите ИИ составить план.'));
   for (const id of ids) {
     const item = itemById(id);
@@ -138,7 +142,7 @@ function renderSteps() {
   list.replaceChildren();
   if (!assembly.steps.length) list.append(node('p', 'Здесь появятся шаги с результатом и проверкой.'));
   const items = new Map(materials().map(item => [item.id, item]));
-  const ids = [...new Set([...assembly.ids, ...assembly.steps.flatMap(step => step.ids)])];
+  const ids = selectedIds();
   assembly.steps.forEach((step, index) => {
     const card = node('section', '', 'step');
     const head = node('div', '', 'panel-head');
