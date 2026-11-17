@@ -1,9 +1,9 @@
 import {acceptanceLimit, askModel, blankAssembly, blankStep, buildPackage, candidates, kinds, managerPrompt, models,
-  readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=18';
+  readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=20';
 import {change, edit, entries, read} from './modules/library.js';
 import {cloudIdentity, connectSync} from './modules/sync.js';
-import {executionContext, executionRecord, readExecutionContext} from './modules/execution-context.js?v=18';
-import {buildSingleHtml} from './modules/single-html.js?v=18';
+import {executionContext, executionRecord, readExecutionContext} from './modules/execution-context.js?v=20';
+import {buildSingleHtml} from './modules/single-html.js?v=20';
 
 const $ = id => document.getElementById(id);
 const status = (id, value) => { $(id).textContent = value; };
@@ -679,23 +679,16 @@ function exApplyResponse(job, reply) {
   }
   const htmlBundle = bundling ? reply.bundle : job.htmlBundle;
   if (job.format === 'html') {
-    if (bundling || htmlBundle) buildSingleHtml(staged, htmlBundle);
-    else if (job.singleHtmlAssembly && job.index + 1 === job.steps.length) {
-      if (!staged['index.html']?.trim()) throw Error('Сборка HTML: нет итогового index.html.');
-      if (Object.keys(staged).some(name => /\.(js|css)$/i.test(name))) {
-        throw Error('Сборка HTML: найдены отдельные JS/CSS-файлы. Верните bundle, чтобы вставить их в шаблон.');
-      }
+    if (bundling || htmlBundle || (job.singleHtmlAssembly && job.index + 1 === job.steps.length)) {
+      buildSingleHtml(staged, htmlBundle);
     }
   }
   return {files: staged, htmlBundle};
 }
 
 function exOutputFiles(job) {
-  if (job.format === 'html' && job.htmlBundle) {
+  if (job.format === 'html' && (job.htmlBundle || (job.singleHtmlAssembly && job.index === job.steps.length))) {
     return {'index.html': buildSingleHtml(job.files, job.htmlBundle)};
-  }
-  if (job.format === 'html' && job.singleHtmlAssembly && job.index === job.steps.length) {
-    return {'index.html': job.files['index.html']};
   }
   return job.files;
 }
