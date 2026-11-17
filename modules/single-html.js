@@ -89,6 +89,7 @@ function assemble(files, template, locations, modules) {
   const {comments, references, inline} = locations;
   const inserts = [];
   const usedFiles = new Set();
+  const unusedSlots = [];
   function insert(file, range, attributes) {
     if (usedFiles.has(file)) throw Error('Сборка HTML: файл подключён несколько раз — ' + file + '.');
     inserts.push({...range, content: inlineModule(files, file, attributes)});
@@ -105,11 +106,16 @@ function assemble(files, template, locations, modules) {
     }
   }
 
-  for (const [key] of comments) {
+  const namedKeys = new Set([...comments.keys()].map(key => key.replace(/:(?:START|END)$/, '')));
+  for (const key of namedKeys) {
     const named = key.match(/^INLINE:\s*([a-zA-Z0-9_./-]+\.(?:js|css))$/i);
-    if (named) {
-      const range = commentSlot(comments, key);
-      insert(named[1], range);
+    if (!named) continue;
+    const file = named[1];
+    const range = commentSlot(comments, key);
+    if (!Object.hasOwn(files, file) && comments.has(key)) {
+      unusedSlots.push({file, range});
+    } else {
+      insert(file, range);
     }
   }
   const covered = inserts.slice();
@@ -122,6 +128,18 @@ function assemble(files, template, locations, modules) {
       throw Error('Сборка HTML: не удалось встроить подключение ' + (ref.source || 'без пути') + '.');
     }
     insert(file, ref, refAttributes(ref));
+  }
+
+  // A single empty slot left by a split module can be discarded when at least
+  // two of its named descendants are already connected in this template.
+  for (const {file, range} of unusedSlots) {
+    const splitAt = file.lastIndexOf('.');
+    const stem = file.slice(0, splitAt);
+    const extension = file.slice(splitAt);
+    const descendants = [...usedFiles].filter(name => name.startsWith(stem + '-')
+      && name.endsWith(extension) && !name.slice(stem.length + 1).includes('/'));
+    if (descendants.length < 2) throw Error('Сборка HTML: нет сохранённого JS/CSS-файла ' + file + '.');
+    inserts.push({...range, content: ''});
   }
 
   if (modules === undefined) {

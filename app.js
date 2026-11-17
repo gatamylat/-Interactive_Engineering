@@ -1,10 +1,10 @@
 import {acceptanceLimit, askModel, askPlan, blankAssembly, blankStep, buildPackage, candidates, kinds, models,
-  missingResultFiles, planFormatError, readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=24';
+  missingResultFiles, planFormatError, readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=25';
 import {skillMetadata, skillScope} from './modules/skills.js?v=24';
 import {change, edit, entries, read} from './modules/library.js?v=24';
 import {cloudIdentity, connectSync} from './modules/sync.js?v=24';
 import {executionContext, executionRecord, patchRecoverySource, readExecutionContext} from './modules/execution-context.js?v=24';
-import {buildSingleHtml} from './modules/single-html.js?v=20';
+import {buildSingleHtml} from './modules/single-html.js?v=25';
 
 const $ = id => document.getElementById(id);
 const status = (id, value) => { $(id).textContent = value; };
@@ -124,7 +124,11 @@ function stepField(step, key, label, limit, multiline) {
   if (multiline) input.rows = 2;
   input.maxLength = limit;
   input.value = step[key];
-  input.addEventListener('input', () => { step[key] = input.value; persistDraft(); });
+  input.addEventListener('input', () => {
+    step[key] = input.value;
+    if (key !== 'check') delete step.assemblyOnly;
+    persistDraft();
+  });
   wrapper.append(caption, input);
   return wrapper;
 }
@@ -797,8 +801,33 @@ function exOutputFiles(job) {
   return job.files;
 }
 
+function isHtmlAssemblyStep(job) {
+  if (job.format !== 'html' || !job.singleHtmlAssembly || job.index === 0 ||
+      job.index + 1 !== job.steps.length) return false;
+  const step = job.steps[job.index];
+  if (step.assemblyOnly === true) return true;
+  // Saved plans from before the flag used this title for the packaging step.
+  return /^сборка и финальная проверка[.!]?$/i.test(step.title.trim())
+    && /собр|сборк|встро|встав|подстав/i.test(step.action)
+    && !/реализ|доработ|исправ|добав|поправ|устран|обнов|напиш|написать/i.test(step.action);
+}
+
 async function exAskStep(job, key) {
-  const messages = [{role: 'user', content: JSON.stringify(executionContext(job))}];
+  let assemblyError;
+  if (isHtmlAssemblyStep(job)) {
+    const reply = {summary: 'Конструктор собрал index.html из сохранённого шаблона и модулей.',
+      check: 'Места подключения проверены, итоговый HTML собран. Функциональные сценарии доступны в приёмке.',
+      check_status: 'not_run', no_changes_needed: true};
+    try {
+      return {reply, ...exApplyResponse(job, reply)};
+    } catch (error) {
+      assemblyError = error.message;
+    }
+  }
+
+  const context = executionContext(job);
+  if (assemblyError) context.htmlAssembly.diagnostic = assemblyError;
+  const messages = [{role: 'user', content: JSON.stringify(context)}];
   const seen = new Set();
   let repairing = false;
   while (true) {
@@ -862,8 +891,8 @@ function exValidate(job = exJob) {
 }
 function exPlanChanged() {
   if (!exJob) return false;
-  const planFields = steps => steps.map(({title, action, result, check, ids}) =>
-    [title, action, result, check, ids]);
+  const planFields = steps => steps.map(({title, action, result, check, ids, assemblyOnly}) =>
+    [title, action, result, check, ids, assemblyOnly === true]);
   return exJob.format !== exId('exec-format').value || exJob.task !== assembly.task || exJob.result !== assembly.result
     || JSON.stringify(exJob.deliverables || []) !== JSON.stringify(assembly.deliverables || [])
     || JSON.stringify(exJob.globalIds) !== JSON.stringify(assembly.ids)
