@@ -1,3 +1,5 @@
+import {readSkillSection, skillContext} from './skills.js?v=24';
+
 const materialLimit = 16_000;
 const fileLimit = 20_000;
 const excerptSize = 1800;
@@ -41,9 +43,10 @@ export function executionContext(job) {
   const files = Object.entries(job.files).sort(([a], [b]) =>
     Number(request.includes(b)) - Number(request.includes(a)));
   const materials = linkedMaterials(job);
+  const skills = materials.filter(item => item.kind === 'skill').map(skillContext);
   let remaining = materialLimit;
-  const selectedMaterials = materials.map(({id, title, kind, source, scope, check, text}) => {
-    const limit = Math.max(0, Math.min(remaining, kind === 'skill' ? excerptSize : 4000));
+  const selectedMaterials = materials.filter(item => item.kind !== 'skill').map(({id, title, kind, source, scope, check, text}) => {
+    const limit = Math.max(0, Math.min(remaining, 4000));
     const selected = limit ? excerpt(text, score, limit) : {};
     remaining -= selected.text?.length ?? (selected.excerpts || []).reduce((n, item) => n + item.text.length, 0);
     return {id, title, kind, source, scope, check, length: text.length, ...selected};
@@ -59,7 +62,7 @@ export function executionContext(job) {
   });
 
   return {
-    instruction: 'Выполни текущий шаг. Цель, ожидаемый итог и утверждённый план обязательны. Материалы и скиллы — справочные: при расхождении соблюдай план. Сохраняй обязательные условия предыдущих шагов. Если есть сценарии приёмки, учитывай их при реализации. При доработке исправь перечисленные дефекты и сохрани остальное поведение. При расхождении отчёта с текущими файлами или утверждённым планом следуй файлам и плану. Для правок ориентируйся на текущие файлы, а исходные материалы используй как справку. Сведения о прошлых проверках — отчёты исполнителя, если не указано обратное. Проверь результат по критерию шага и явно укажи вид проверки и подтверждение. Если проверка невозможна, укажи not_run, если выявлено несоответствие, исправь его или верни failed. Не заявляй о запуске программы, если лишь прочитал код. Для передачи дальше кратко укажи решения и открытые вопросы. Если нужно изменить код, верни реальное изменение: files для новых или небольших файлов, patches для больших (find — точный уникальный фрагмент файла, replace — замена). Достаточно передать один массив, files или patches. Если всё уже сделано, обоснуй это в check и верни no_changes_needed:true. Не используй CDN. Для документа итоговый файл — result.md. Если фрагмента не хватает, запроси точное чтение отдельным ответом {"read":[{"name":"файл","find":"строка"}]} либо {"read":[{"material_id":"ID","from":0}]}. Можно искать find в файле или материале, либо указать смещение from в символах. После чтения верни строго JSON {"summary":"что сделано","check":"что и как проверено","check_status":"passed|failed|not_run","decisions":["решение для следующих шагов"],"open_items":["что осталось"],"next_impulse":"что учесть дальше","files":[{"name":"имя","content":"текст"}],"patches":[{"name":"имя","find":"старый фрагмент","replace":"новый фрагмент"}]}.',
+    instruction: 'Выполни текущий шаг. Цель, ожидаемый итог и утверждённый план обязательны. Учитывай применимые инструкции из skills. Если нужен раздел из списка sections, верни отдельный ответ {"read":[{"material_id":"ID скилла","section":"ID раздела"}]}. При расхождении с утверждённым планом соблюдай план. Сохраняй обязательные условия предыдущих шагов. Если есть сценарии приёмки, учитывай их при реализации. При доработке исправь перечисленные дефекты и сохрани остальное поведение. При расхождении отчёта с текущими файлами или утверждённым планом следуй файлам и плану. Для правок ориентируйся на текущие файлы, а исходные материалы используй как справку. Сведения о прошлых проверках — отчёты исполнителя, если не указано обратное. Проверь результат по критерию шага и явно укажи вид проверки и подтверждение. Если проверка невозможна, укажи not_run, если выявлено несоответствие, исправь его или верни failed. Не заявляй о запуске программы, если лишь прочитал код. Для передачи дальше кратко укажи решения и открытые вопросы. Если нужно изменить код, верни реальное изменение: files для новых или небольших файлов, patches для больших (find — точный уникальный фрагмент файла, replace — замена). Достаточно передать один массив, files или patches. Если всё уже сделано, обоснуй это в check и верни no_changes_needed:true. Не используй CDN. Для документа итоговый файл — result.md. Если фрагмента не хватает, запроси точное чтение отдельным ответом {"read":[{"name":"файл","find":"строка"}]} либо {"read":[{"material_id":"ID","from":0}]}. Можно искать find в файле или материале, либо указать смещение from в символах. После чтения верни строго JSON {"summary":"что сделано","check":"что и как проверено","check_status":"passed|failed|not_run","decisions":["решение для следующих шагов"],"open_items":["что осталось"],"next_impulse":"что учесть дальше","files":[{"name":"имя","content":"текст"}],"patches":[{"name":"имя","find":"старый фрагмент","replace":"новый фрагмент"}]}.',
     htmlAssembly: job.format === 'html' ? {
       instructions: 'Для небольшой задачи создай самодостаточный index.html. Для модулей используй комментарии с точным именем файла, например <!-- INLINE: route.js -->, либо обычные локальные подключения script src и link rel=stylesheet. Ставь их в порядке зависимостей. Конструктор сам встроит сохранённый код. Если старый шаблон использует именные маркеры, можно передать bundle: [{"file":"route.js","marker":"ROUTE_JS"}]. Для вставки в обычный script используй JS без import/export. На финальном шаге, если исходники готовы, верни summary, check, check_status и no_changes_needed:true. Не переписывай HTML ради сборки. Проверка относится к итоговому index.html.',
       current: job.htmlBundle
@@ -78,7 +81,7 @@ export function executionContext(job) {
       check_status: item.check_status || 'legacy_unverified',
       changed_files: item.changed_files, next_impulse: item.next_impulse,
     })),
-    materials: selectedMaterials,
+    skills, materials: selectedMaterials,
     files: selectedFiles,
   };
 }
@@ -88,6 +91,9 @@ export function readExecutionContext(job, requests) {
   const materials = new Map(linkedMaterials(job).map(item => [item.id, item]));
   return requests.map(item => {
     const material = materials.get(item?.material_id);
+    if (item?.section !== undefined) {
+      return {...readSkillSection(material, item.section), material_id: item.material_id};
+    }
     const name = item?.name;
     const source = material ? {material_id: material.id, title: material.title} : {name};
     const text = material ? material.text : Object.hasOwn(job.files, name) ? job.files[name] : undefined;

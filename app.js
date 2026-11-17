@@ -1,8 +1,9 @@
-import {acceptanceLimit, askModel, blankAssembly, blankStep, buildPackage, candidates, kinds, managerPrompt, models,
-  missingResultFiles, planFormatError, readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=22';
-import {change, edit, entries, read} from './modules/library.js';
-import {cloudIdentity, connectSync} from './modules/sync.js';
-import {executionContext, executionRecord, patchRecoverySource, readExecutionContext} from './modules/execution-context.js?v=22';
+import {acceptanceLimit, askModel, askPlan, blankAssembly, blankStep, buildPackage, candidates, kinds, models,
+  missingResultFiles, planFormatError, readPlan, textLimit, validAssembly, validEntry} from './modules/core.js?v=24';
+import {skillMetadata, skillScope} from './modules/skills.js?v=24';
+import {change, edit, entries, read} from './modules/library.js?v=24';
+import {cloudIdentity, connectSync} from './modules/sync.js?v=24';
+import {executionContext, executionRecord, patchRecoverySource, readExecutionContext} from './modules/execution-context.js?v=24';
 import {buildSingleHtml} from './modules/single-html.js?v=20';
 
 const $ = id => document.getElementById(id);
@@ -96,7 +97,7 @@ function renderSelected() {
     const item = itemById(id);
     const card = node('article', '', 'selected-item');
     card.append(node('strong', item?.title ?? 'Материал недоступен'), node('p',
-      [kinds[item?.kind], reasons[id] || item?.scope, item?.source].filter(Boolean).join(' · ')));
+      [kinds[item?.kind], reasons[id] || (item && skillScope(item)), item?.source].filter(Boolean).join(' · ')));
     const actions = node('div', '', 'row');
     if (item) actions.append(button('Открыть', () => { showLibrary(item.kind); openEditor(item); }));
     actions.append(button('Убрать', () => {
@@ -303,18 +304,18 @@ $('assembly').addEventListener('submit', async event => {
   const format = $('exec-format').value;
   const keepResult = !!assembly.result.trim() && !(assembly.autoResult && assembly.planFormat !== format);
   const request = {...assembly, result: keepResult ? assembly.result : ''};
-  const available = candidates([request.task, request.result].join(' '), materials(), request.ids);
-  const prompt = managerPrompt(request, available, format);
+  const eligible = candidates([request.task, request.result].join(' '), materials(), request.ids);
+  const isCurrent = () => profile === current && JSON.stringify(assembly) === original && $('exec-format').value === format;
   planning = true;
   updatePackage();
   status('plan-status', models[chosenModel] + ' составляет план…');
   try {
-    const reply = await askModel(chosenModel, key, [{role: 'user', content: prompt}]);
-    if (profile !== current || JSON.stringify(assembly) !== original || $('exec-format').value !== format) {
+    const planned = await askPlan(chosenModel, key, request, eligible, format, fetch, isCurrent);
+    if (!planned || !isCurrent()) {
       status('plan-status', 'Сборка изменилась во время запроса. Составьте план для текущей задачи.');
       return;
     }
-    const proposed = readPlan(reply, available, format);
+    const proposed = readPlan(planned.reply, planned.available, format);
     const result = keepResult ? assembly.result : proposed.result;
     const error = planFormatError({...proposed, result}, format);
     if (error) throw new Error(error);
@@ -403,12 +404,12 @@ function renderLibrary() {
   const kind = $('kind-filter').value;
   const query = $('search').value.trim().toLowerCase();
   const items = entries(state).filter(item => (!kind || item.kind === kind)
-    && (!query || [item.title, item.scope, item.source, item.text].some(text => text.toLowerCase().includes(query)))).sort(byTitle);
+    && (!query || [item.title, skillScope(item), item.source, item.text].some(text => text.toLowerCase().includes(query)))).sort(byTitle);
   $('files').disabled = kind === 'recipe' || kind === 'expectation';
   if (!items.length) list.append(node('p', query ? 'Ничего не найдено.' : 'В этой рубрике пока нет записей.'));
   for (const item of items) {
     const card = node('article', '', 'item');
-    card.append(node('strong', item.title), node('p', [kinds[item.kind], item.scope, item.source].filter(Boolean).join(' · ')));
+    card.append(node('strong', item.title), node('p', [kinds[item.kind], skillScope(item), item.source].filter(Boolean).join(' · ')));
     const actions = node('div', '', 'row');
     if (item.kind === 'recipe') {
       actions.append(button('Открыть сборку', () => loadRecipe(item)), button('Удалить', () => removeEntry(item.id, state.library[item.id]?.rev, item.title), 'danger'));
@@ -447,6 +448,12 @@ function openEditor(item) {
   const currentKind = $('kind-filter').value;
   $('entry-kind').value = item?.kind ?? (currentKind && currentKind !== 'recipe' ? currentKind : 'document');
   for (const key of ['title', 'scope', 'source', 'text', 'check']) $('entry-' + key).value = item?.[key] ?? '';
+  if (item?.kind === 'skill') $('entry-scope').value = skillScope(item);
+  if (editing) {
+    editing.originalText = item.text;
+    editing.visibleText = $('entry-text').value;
+  }
+  updateEntryLimits();
   $('remove-entry').hidden = !item;
   $('catalog').hidden = true;
   $('entry-form').hidden = false;
@@ -460,6 +467,12 @@ function closeEditor() {
   $('entry-form').hidden = true;
 }
 
+function updateEntryLimits() {
+  const skill = $('entry-kind').value === 'skill';
+  $('entry-scope').maxLength = skill ? textLimit : 1000;
+  $('entry-check').maxLength = skill ? textLimit : 2000;
+}
+$('entry-kind').addEventListener('change', updateEntryLimits);
 $('kind-filter').addEventListener('change', renderLibrary);
 $('search').addEventListener('input', renderLibrary);
 $('new-entry').addEventListener('click', () => openEditor());
@@ -469,6 +482,10 @@ $('entry-form').addEventListener('submit', async event => {
   const current = editing;
   const entry = {id: current?.id ?? crypto.randomUUID(), kind: $('entry-kind').value};
   for (const key of ['title', 'scope', 'source', 'text', 'check']) entry[key] = $('entry-' + key).value.trim();
+  if (entry.kind === 'skill') {
+    const text = $('entry-text').value;
+    entry.text = current && text === current.visibleText ? current.originalText : text;
+  }
   try {
     if (!validEntry(entry) || !(entry.text || entry.source)) throw new Error('Укажите название и добавьте текст или источник. Размер записи — до 200 КБ.');
     if (entry.kind === 'expectation' && !entry.check) throw new Error('Добавьте способ проверить ожидание.');
@@ -505,13 +522,15 @@ $('files').addEventListener('change', async event => {
   for (const file of files) {
     try {
       if (file.size > textLimit) throw new Error();
-      const text = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer()).trim();
       const autoKind = /(?:^|[\\/])SKILL\.md$/i.test(file.name) ? 'skill'
         : /\.(?:js|ts|html|css|py|webmanifest)$/i.test(file.name) ? 'code' : 'document';
-      const title = autoKind === 'skill' ? text.match(/^name:[ \t]*([\w-]+)\s*$/m)?.[1] ?? file.name : file.name;
-      const entry = {id: crypto.randomUUID(), kind: kind || autoKind, title: title.slice(0, 180),
-        text, source: file.name, scope: '', check: ''};
-      if (!text || !validEntry(entry)) throw new Error();
+      const entryKind = autoKind === 'skill' ? 'skill' : kind || autoKind;
+      const original = new TextDecoder('utf-8', {fatal: true, ignoreBOM: entryKind === 'skill'}).decode(await file.arrayBuffer());
+      const text = entryKind === 'skill' ? original : original.trim();
+      const fields = entryKind === 'skill' ? skillMetadata(text) : {};
+      const entry = {id: crypto.randomUUID(), kind: entryKind, title: (fields.title || file.name).slice(0, 180),
+        text, source: file.name, scope: fields.scope || '', check: fields.check || ''};
+      if (!text.trim() || !validEntry(entry)) throw new Error();
       added.push(entry);
     } catch { skipped.push(file.name); }
   }
